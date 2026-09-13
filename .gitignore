@@ -1,0 +1,11 @@
+# Editor and OS junk
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
