@@ -57,7 +57,7 @@ Mouse Tuner escribe exactamente eso, para el dispositivo que elijas, desde la ba
 - 💾 **Persistente**: se guarda en tu config de Hyprland, no solo en memoria.
 - 🖱️ **Por dispositivo**: solo cambia el puntero que eliges; el resto queda intacto.
 - 🖐️ **Trackpads soportados**: sección propia para trackpads (Magic Trackpad 2 incluido) con natural scrolling, clickfinger, disable-while-typing y velocidad de scroll.
-- 🧭 **Panel plegable y escaneable**: secciones **DEVICE / MOTION / TRACKPAD / GESTURES** que se pliegan al hacer clic, cada una con un **resumen en vivo** en su encabezado (dispositivo + batería, perfil · sensibilidad, etc.). El pie con *Restablecer dispositivo* y la línea de estado queda siempre visible.
+- 🧭 **Panel plegable y escaneable**: secciones **DISPOSITIVO / MOVIMIENTO / TRACKPAD / GESTOS** que se pliegan al hacer clic, cada una con un **resumen en vivo** en su encabezado (dispositivo + batería, perfil · sensibilidad, etc.). El pie con *Restablecer dispositivo* y la línea de estado queda siempre visible.
 - 🌐 **Bilingüe (EN/ES)**: el botón **EN·ES** del encabezado cambia todos los textos al instante y guarda la preferencia en los ajustes del widget (`language`); también configurable con `omarchy bar set io.github.mrchispa.mouse-tuner language ES`.
 - 🔋 **Batería cuando el kernel la expone**: el nivel del dispositivo seleccionado (el Magic Trackpad 2 por Bluetooth, por ejemplo) aparece junto a su nombre, leído de `power_supply` del kernel y **sin `root`**.
 - ⚡ **Motor CLI independiente** (`bin/mouse-tuner.sh`), usable sin la barra.
@@ -111,13 +111,13 @@ omarchy-shell shell rescanPlugins
 
    | Sección      | Estado inicial            | Resumen que muestra siempre                  |
    | ------------ | ------------------------- | -------------------------------------------- |
-   | **DEVICE**   | abierta                   | dispositivo seleccionado + batería           |
-   | **MOTION**   | plegada                   | perfil · sensibilidad                        |
+   | **DISPOSITIVO** | abierta                | dispositivo seleccionado + batería           |
+   | **MOVIMIENTO**  | plegada                | perfil · sensibilidad                        |
    | **TRACKPAD** | plegada (solo trackpads)  | natural/tradicional · clickfinger · scroll   |
-   | **GESTURES** | plegada                   | número de gestos activos                     |
+   | **GESTOS**      | plegada                | número de gestos activos                     |
 
    Haz clic en el encabezado de una sección para abrirla o cerrarla. El pie (`Restablecer dispositivo` y la línea de estado) permanece siempre visible.
-4. Elige el **dispositivo** que quieres ajustar. Los touchpad se marcan como *(touchpad)*.
+4. Elige el **dispositivo** que quieres ajustar. Los touchpad se marcan como *(trackpad)*.
 5. En **MOVIMIENTO**, elige un **preset**:
 
    | Preset           | Perfil     | Sensibilidad | Para qué                         |
@@ -129,6 +129,8 @@ omarchy-shell shell rescanPlugins
 6. O arrastra el **slider** de sensibilidad (`-1.00` a `1.00`). Se aplica solo.
 7. Si el dispositivo es un **trackpad**, abre la sección **TRACKPAD** (ver más abajo).
 8. **Restablecer dispositivo** elimina el ajuste y devuelve ese dispositivo al default del sistema.
+
+Con **todas las secciones plegadas el panel cabe entero, sin scroll**; si abres varias, el contenido se desplaza.
 
 Cada resumen de sección muestra el estado activo sin abrirla, por ejemplo `flat · -0.15` en MOVIMIENTO, `tradicional · clickfinger sí · 1.00` en TRACKPAD o `2 activos` en GESTOS.
 
@@ -188,7 +190,7 @@ hl.device({ name = "logitech-usb-receiver-mouse", accel_profile = "flat", sensit
 
 ## Trackpads y Magic Trackpad 2
 
-Hyprland trata los trackpads como touchpads libinput. El Apple Magic Trackpad 2 (por Bluetooth o USB) aparece como `apple-inc.-magic-trackpad`, y Mouse Tuner lo detecta por el nombre (`touchpad` o `trackpad`, sin distinguir mayúsculas) y muestra la sección **TRACKPAD** cuando lo seleccionas. En la lista de dispositivos se marca con *(touchpad)*.
+Hyprland trata los trackpads como touchpads libinput. El Apple Magic Trackpad 2 (por Bluetooth o USB) aparece como `apple-inc.-magic-trackpad`, y Mouse Tuner lo detecta por el nombre (`touchpad` o `trackpad`, sin distinguir mayúsculas) y muestra la sección **TRACKPAD** cuando lo seleccionas. En la lista de dispositivos se marca con *(trackpad)*.
 
 ### Driver
 
@@ -234,7 +236,7 @@ bin/mouse-tuner.sh set --device apple-inc.-magic-trackpad \
 El panel muestra el nivel de batería del dispositivo seleccionado, junto a su nombre:
 
 ```
-Apple Inc. Magic Trackpad (touchpad) · 100%
+Apple Inc. Magic Trackpad (trackpad) · 100%
 ```
 
 - **De dónde sale**: del subsistema `power_supply` del kernel. Para un dispositivo HID, el kernel publica la batería como `hid-<uniq>-battery-<n>` (por ejemplo `/sys/class/power_supply/hid-bc:d0:74:ba:0b:f6-battery-144/`), con `capacity` y `status` (`Charging`, `Discharging`, `Full`, `Unknown`). Mouse Tuner cruza el nombre del dispositivo con su `Uniq` en `/proc/bus/input/devices`, así que **no hace falta `root`** ni herramientas externas.
@@ -300,7 +302,7 @@ Mientras el dispositivo no se re-inicialice, Hyprland puede listarlo sin gestos 
 | El icono no aparece en la barra   | `omarchy-shell shell rescanPlugins` o `omarchy restart shell`.            |
 | Un dispositivo es rechazado       | Su nombre tiene caracteres que el motor no escribe (`/`, comillas, `..`). |
 | Un ajuste es rechazado            | Solo se aceptan los campos de la tabla de la CLI; `tap-to-click` es global. |
-| El trackpad no se marca *(touchpad)* | Debe aparecer en `mice[]` de `hyprctl devices -j` y su nombre debe contener `touchpad` o `trackpad`. |
+| El trackpad no se marca *(trackpad)* | Debe aparecer en `mice[]` de `hyprctl devices -j` y su nombre debe contener `touchpad` o `trackpad`. |
 | El trackpad no responde tras suspender | Reconéctalo (`bluetoothctl connect <MAC>`); es la limitación de Bluetooth descrita arriba. |
 
 ---
