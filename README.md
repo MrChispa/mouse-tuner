@@ -57,6 +57,7 @@ Mouse Tuner escribe exactamente eso, para el dispositivo que elijas, desde la ba
 - 💾 **Persistente**: se guarda en tu config de Hyprland, no solo en memoria.
 - 🖱️ **Por dispositivo**: solo cambia el puntero que eliges; el resto queda intacto.
 - 🖐️ **Trackpads soportados**: sección propia para trackpads (Magic Trackpad 2 incluido) con natural scrolling, clickfinger, disable-while-typing y velocidad de scroll.
+- 🔋 **Batería cuando el kernel la expone**: el nivel del dispositivo seleccionado (el Magic Trackpad 2 por Bluetooth, por ejemplo) aparece junto a su nombre, leído de `power_supply` del kernel y **sin `root`**.
 - ⚡ **Motor CLI independiente** (`bin/mouse-tuner.sh`), usable sin la barra.
 - 🔒 **Escritura atómica con lock**: nada fuera de su bloque se toca, byte a byte.
 - 🛟 **A prueba de errores**: si Hyprland rechaza la config, se restaura el archivo anterior y el cambio falla en vez de quedar a medias.
@@ -125,8 +126,9 @@ El panel muestra el estado activo, por ejemplo `flat · -0.30` en un mouse o `na
 El motor es un script independiente, útil para scripts o para otra máquina:
 
 ```bash
-bin/mouse-tuner.sh devices                                              # lista dispositivos (JSON)
+bin/mouse-tuner.sh devices                                              # lista dispositivos (JSON, incluye batería)
 bin/mouse-tuner.sh status                                               # ajustes activos (JSON)
+bin/mouse-tuner.sh battery --device <name>                              # batería de un dispositivo (JSON)
 bin/mouse-tuner.sh set --device <name> --profile flat --sensitivity -0.3
 bin/mouse-tuner.sh remove --device <name>                               # quita un dispositivo
 bin/mouse-tuner.sh reset                                                # quita todo el bloque gestionado
@@ -212,6 +214,27 @@ O el mismo ajuste desde la CLI:
 bin/mouse-tuner.sh set --device apple-inc.-magic-trackpad \
   --natural-scroll false --clickfinger true \
   --disable-while-typing false --scroll-factor 0.8
+```
+
+### Batería
+
+El panel muestra el nivel de batería del dispositivo seleccionado, junto a su nombre:
+
+```
+Apple Inc. Magic Trackpad (touchpad) · 100%
+```
+
+- **De dónde sale**: del subsistema `power_supply` del kernel. Para un dispositivo HID, el kernel publica la batería como `hid-<uniq>-battery-<n>` (por ejemplo `/sys/class/power_supply/hid-bc:d0:74:ba:0b:f6-battery-144/`), con `capacity` y `status` (`Charging`, `Discharging`, `Full`, `Unknown`). Mouse Tuner cruza el nombre del dispositivo con su `Uniq` en `/proc/bus/input/devices`, así que **no hace falta `root`** ni herramientas externas.
+- **Solo si el kernel la expone**: los dispositivos que no publican batería (por ejemplo un mouse con receptor USB Logitech) no muestran ningún nivel, y tampoco uno inventado. El Magic Trackpad 2 por Bluetooth sí la publica.
+- **Cuándo se actualiza**: al abrir el panel y cada ~60 s mientras siga abierto. El estado (`charging`, `full`) solo se añade cuando el kernel lo informa.
+- **Desde la CLI**: el subcomando `battery --device <name>` devuelve el mismo objeto (`null` si no hay batería), útil para scripts.
+
+```bash
+bin/mouse-tuner.sh battery --device apple-inc.-magic-trackpad
+# {"ok":true,"device":"apple-inc.-magic-trackpad","battery":{"percent":100,"state":"Discharging"}}
+
+bin/mouse-tuner.sh battery --device ps/2-generic-mouse
+# {"ok":true,"device":"ps/2-generic-mouse","battery":null}
 ```
 
 ### Limitación conocida: Bluetooth y suspensión
@@ -304,6 +327,7 @@ Mouse Tuner writes exactly that, for the device you choose, from the bar.
 - 💾 **Persistent**: written into your Hyprland config, not just memory.
 - 🖱️ **Per device**: only the pointer you pick changes; everything else stays as it was.
 - 🖐️ **Trackpad support**: a dedicated section for trackpads (Magic Trackpad 2 included) with natural scrolling, clickfinger, disable-while-typing and scroll speed.
+- 🔋 **Battery when the kernel exposes one**: the selected device's level (the Magic Trackpad 2 over Bluetooth, for example) shows next to its name, read from the kernel `power_supply` with **no `root`**.
 - ⚡ **Standalone CLI engine** (`bin/mouse-tuner.sh`), usable without the bar.
 - 🔒 **Atomic, locked writes**: nothing outside its block is touched, byte for byte.
 - 🛟 **Fail-safe**: if Hyprland rejects the config, the previous file is restored and the change fails instead of landing half-applied.
@@ -372,8 +396,9 @@ The panel shows the active state, for example `flat · -0.30` for a mouse or `na
 The engine is a standalone script, handy for scripting or another machine:
 
 ```bash
-bin/mouse-tuner.sh devices                                              # list devices (JSON)
+bin/mouse-tuner.sh devices                                              # list devices (JSON, includes battery)
 bin/mouse-tuner.sh status                                               # active settings (JSON)
+bin/mouse-tuner.sh battery --device <name>                              # battery for one device (JSON)
 bin/mouse-tuner.sh set --device <name> --profile flat --sensitivity -0.3
 bin/mouse-tuner.sh remove --device <name>                               # drop one device
 bin/mouse-tuner.sh reset                                                # drop the whole managed block
@@ -459,6 +484,27 @@ Or the same setting from the CLI:
 bin/mouse-tuner.sh set --device apple-inc.-magic-trackpad \
   --natural-scroll false --clickfinger true \
   --disable-while-typing false --scroll-factor 0.8
+```
+
+### Battery
+
+The panel shows the selected device's battery level next to its name:
+
+```
+Apple Inc. Magic Trackpad (touchpad) · 100%
+```
+
+- **Where it comes from**: the kernel `power_supply` subsystem. For a HID device the kernel publishes the battery as `hid-<uniq>-battery-<n>` (for example `/sys/class/power_supply/hid-bc:d0:74:ba:0b:f6-battery-144/`), with `capacity` and `status` (`Charging`, `Discharging`, `Full`, `Unknown`). Mouse Tuner matches the device name to its `Uniq` in `/proc/bus/input/devices`, so **no `root`** and no external tools are needed.
+- **Only when the kernel exposes one**: devices that publish no battery (a Logitech USB-receiver mouse, for instance) show no level at all, and never an invented one. The Magic Trackpad 2 over Bluetooth does publish one.
+- **When it refreshes**: when the panel opens and every ~60 s while it stays open. The state (`charging`, `full`) is only appended when the kernel reports it.
+- **From the CLI**: the `battery --device <name>` subcommand returns the same object (`null` when there is no battery), handy for scripting.
+
+```bash
+bin/mouse-tuner.sh battery --device apple-inc.-magic-trackpad
+# {"ok":true,"device":"apple-inc.-magic-trackpad","battery":{"percent":100,"state":"Discharging"}}
+
+bin/mouse-tuner.sh battery --device ps/2-generic-mouse
+# {"ok":true,"device":"ps/2-generic-mouse","battery":null}
 ```
 
 ### Known limitation: Bluetooth and suspend

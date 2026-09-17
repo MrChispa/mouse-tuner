@@ -4,8 +4,9 @@
 # Every subcommand prints exactly one JSON object on stdout. Errors are JSON
 # too ({"ok":false,"error":"..."}) so the bar widget can always parse a reply.
 #
-#   devices                                  list pointing devices
+#   devices                                  list pointing devices (with battery)
 #   status                                   list devices + managed entries
+#   battery --device N                       battery level for one device
 #   set --device N [flags]                   upsert one entry
 #   remove --device N                        delete one entry
 #   reset                                    delete the whole managed block
@@ -105,6 +106,99 @@ fmt_float() {
   }'
 }
 
+# --- battery discovery ------------------------------------------------------
+#
+# Root-free battery reporting. The kernel exposes a HID device's battery as a
+# power_supply of its own, named after the device's Bluetooth/USB unique id:
+#
+#   /sys/class/power_supply/hid-<uniq-lowercased>-battery-<n>/capacity
+#   /sys/class/power_supply/hid-<uniq-lowercased>-battery-<n>/status
+#
+# /proc/bus/input/devices is the bridge between a kernel device name and that
+# uniq, and Hyprland's device name is the kernel name lowercased with spaces
+# turned into dashes. Devices the kernel does not expose a battery for simply
+# get `null`: this never guesses or invents a level.
+
+# Kernel device name -> Hyprland device name.
+hypr_name_from_kernel() {
+  local n=${1-}
+  printf '%s' "$n" | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
+}
+
+# uniq -> JSON battery object, or the literal `null`.
+battery_json_for_uniq() {
+  local uniq_lc dir cand capacity status
+  uniq_lc="$(printf '%s' "${1-}" | tr '[:upper:]' '[:lower:]')"
+  [[ -n $uniq_lc ]] || { printf 'null'; return 0; }
+
+  dir=''
+  for cand in "/sys/class/power_supply/hid-${uniq_lc}-battery" \
+              /sys/class/power_supply/hid-${uniq_lc}-battery-*; do
+    if [[ -d $cand ]]; then dir=$cand; break; fi
+  done
+  [[ -n $dir ]] || { printf 'null'; return 0; }
+
+  capacity="$(cat "$dir/capacity" 2>/dev/null || true)"
+  status="$(cat "$dir/status" 2>/dev/null || true)"
+  capacity="${capacity//[$'\r\n\t ']/}"
+  status="${status//[$'\r\n']/}"
+  # An unreadable or non-numeric capacity is not a battery reading.
+  [[ $capacity =~ ^[0-9]+$ ]] || { printf 'null'; return 0; }
+  [[ -n $status ]] || status="Unknown"
+
+  printf '{"percent":%s,"state":"%s"}' "$capacity" "$(json_escape "$status")"
+}
+
+# device name -> uniq, taken from /proc/bus/input/devices (blocks separated by
+# blank lines). Blocks without a uniq cannot be matched and are skipped.
+declare -A BATTERY_MAP=()
+BATTERY_BY_NAME_JSON='{}'
+
+build_battery_map() {
+  BATTERY_MAP=()
+  BATTERY_BY_NAME_JSON='{}'
+  [[ -r /proc/bus/input/devices ]] || return 0
+
+  local name='' uniq='' line pair
+  local -a pairs=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    case "$line" in
+      'N: Name='*)
+        name="${line#N: Name=}"
+        name="${name#\"}"; name="${name%\"}"
+        ;;
+      'U: Uniq='*)
+        uniq="${line#U: Uniq=}"
+        ;;
+      '')
+        if [[ -n $name && -n $uniq ]]; then
+          pairs+=("$(hypr_name_from_kernel "$name")|$uniq")
+        fi
+        name=''; uniq=''
+        ;;
+    esac
+  done < /proc/bus/input/devices
+  # A final block that has no trailing blank line.
+  if [[ -n $name && -n $uniq ]]; then
+    pairs+=("$(hypr_name_from_kernel "$name")|$uniq")
+  fi
+
+  local key val out='{' first=1
+  for pair in "${pairs[@]:-}"; do
+    [[ -n $pair ]] || continue
+    key="${pair%%|*}"
+    uniq="${pair#*|}"
+    val="$(battery_json_for_uniq "$uniq")"
+    [[ $val == null ]] && continue
+    BATTERY_MAP["$key"]="$val"
+    [[ $first -eq 1 ]] || out+=','
+    first=0
+    out+="\"$(json_escape "$key")\":$val"
+  done
+  BATTERY_BY_NAME_JSON="$out}"
+  return 0
+}
+
 # --- device discovery -------------------------------------------------------
 
 DEVICES_JSON='[]'
@@ -112,6 +206,7 @@ PRIMARY_NAME=''
 
 collect_devices() {
   local raw
+  build_battery_map
   raw="$(hyprctl devices -j 2>/dev/null || true)"
   if [[ -z $raw ]]; then
     DEVICES_JSON='[]'
@@ -119,7 +214,10 @@ collect_devices() {
     return 0
   fi
 
-  DEVICES_JSON="$(jq -c '
+  # The battery comes from the same batched `hyprctl devices` read above: every
+  # device carries its own `battery` (or `null`), so the widget never has to
+  # call the helper once per device.
+  DEVICES_JSON="$(jq -c --argjson bat "$BATTERY_BY_NAME_JSON" '
     def titlecase:
       split(" ")
       | map(if length > 0 then (.[0:1] | ascii_upcase) + .[1:] else . end)
@@ -129,7 +227,8 @@ collect_devices() {
       | select(((.name // "") | test("consumer-control|system-control|fake")) | not)
       | { name: (.name // ""),
           label: ((.name // "") | gsub("[-_]"; " ") | titlecase),
-          touchpad: is_trackpad } ]
+          touchpad: is_trackpad,
+          battery: ($bat[(.name // "")] // null) } ]
   ' <<<"$raw" 2>/dev/null)" || DEVICES_JSON='[]'
 
   PRIMARY_NAME="$(jq -r '
@@ -439,6 +538,26 @@ cmd_status() {
     "$(json_escape "$CONFIG")" "$(entries_json)" "$DEVICES_JSON" "$(json_escape "$PRIMARY_NAME")"
 }
 
+# Read-only lookup, so unlike `set`/`remove` it accepts any name (a missing or
+# odd one simply reports `null`) instead of refusing it.
+cmd_battery() {
+  local dev=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --device)
+        [[ $# -ge 2 ]] || fail_json "--device requires a value"
+        dev="$2"; shift 2 ;;
+      *)
+        fail_json "unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n $dev ]] || fail_json "--device is required"
+  build_battery_map
+  printf '{"ok":true,"device":"%s","battery":%s}\n' \
+    "$(json_escape "$dev")" "${BATTERY_MAP[$dev]:-null}"
+}
+
 cmd_set() {
   local dev=''
   local -A set_fields=()
@@ -602,6 +721,7 @@ Mouse Tuner helper
 Usage:
   mouse-tuner.sh devices
   mouse-tuner.sh status
+  mouse-tuner.sh battery --device <name>
   mouse-tuner.sh set --device <name> [flags]
   mouse-tuner.sh remove --device <name>
   mouse-tuner.sh reset
@@ -630,6 +750,7 @@ main() {
   case "$cmd" in
     devices) cmd_devices "$@" ;;
     status) cmd_status "$@" ;;
+    battery) cmd_battery "$@" ;;
     set) with_lock cmd_set "$@" ;;
     remove) with_lock cmd_remove "$@" ;;
     reset) with_lock cmd_reset "$@" ;;

@@ -51,6 +51,12 @@ Panel {
     return false
   }
 
+  readonly property var selectedDeviceInfo: {
+    for (var i = 0; i < devices.length; i++)
+      if (devices[i].name === selectedDevice) return devices[i]
+    return null
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -62,6 +68,23 @@ Panel {
   function entryFor(name) {
     for (var i = 0; i < entries.length; i++) if (entries[i].device === name) return entries[i]
     return null
+  }
+
+  // Compact suffix for a device row: " · 100%", plus " · charging" or
+  // " · full" when the kernel reports that state. Plain text on purpose: the
+  // bar font has no reliable battery glyph, and a codepoint it lacks renders
+  // as a literal dash. Devices without a battery expose nothing.
+  function batterySuffix(info) {
+    if (!info || !info.battery) return ""
+    var percent = info.battery.percent
+    if (percent === undefined || percent === null) return ""
+    var value = Math.round(Number(percent))
+    if (!isFinite(value)) return ""
+    var suffix = " · " + value + "%"
+    var state = String(info.battery.state || "").toLowerCase()
+    if (state === "charging") suffix += " · charging"
+    else if (state === "full") suffix += " · full"
+    return suffix
   }
 
   function syncFromEntry() {
@@ -307,6 +330,17 @@ Panel {
     onTriggered: root.applyNow()
   }
 
+  // The battery is read when the panel opens (onOpenedChanged) and kept fresh
+  // while it stays open. One batched `status` call refreshes it; the helper
+  // reads the kernel power_supply every time, so no per-device calls are made.
+  Timer {
+    id: batteryRefreshTimer
+    interval: 60000
+    repeat: true
+    running: root.opened
+    onTriggered: root.refresh()
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
@@ -381,7 +415,9 @@ Panel {
               required property var modelData
               required property int index
               width: contentColumn.width
-              text: modelData.label + (modelData.touchpad ? " (touchpad)" : "")
+              text: modelData.label
+                + (modelData.touchpad ? " (touchpad)" : "")
+                + (modelData.name === root.selectedDevice ? root.batterySuffix(modelData) : "")
               selected: modelData.name === root.selectedDevice
               bordered: true
               leftAlign: true
