@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -45,6 +46,31 @@ Panel {
   property bool pendingMotion: false
   property bool pendingTrackpad: false
 
+  // Gestures are global (not per device). The panel exposes a curated set of
+  // slots; clicking a row cycles its action and "off" removes the gesture.
+  // Gestures added through the CLI still come back in the helper output and
+  // are never touched by these rows.
+  property var gestures: []
+  property var gestureCatalog: ({})
+
+  readonly property var gestureSlots: [
+    { fingers: 3, direction: "horizontal" },
+    { fingers: 3, direction: "vertical" },
+    { fingers: 3, direction: "pinch" },
+    { fingers: 4, direction: "horizontal" },
+    { fingers: 4, direction: "vertical" },
+    { fingers: 4, direction: "pinch" }
+  ]
+
+  readonly property var gestureRing: {
+    var ring = ["off"]
+    if (gestureCatalog && Array.isArray(gestureCatalog.actions)) {
+      for (var i = 0; i < gestureCatalog.actions.length; i++)
+        ring.push(String(gestureCatalog.actions[i]))
+    }
+    return ring
+  }
+
   readonly property bool selectedIsTrackpad: {
     for (var i = 0; i < devices.length; i++)
       if (devices[i].name === selectedDevice) return devices[i].touchpad === true
@@ -85,6 +111,65 @@ Panel {
     if (state === "charging") suffix += " · charging"
     else if (state === "full") suffix += " · full"
     return suffix
+  }
+
+  function gestureFor(fingers, direction) {
+    for (var i = 0; i < gestures.length; i++) {
+      var g = gestures[i]
+      if (Number(g.fingers) === Number(fingers)
+          && String(g.direction) === String(direction)
+          && !g.mods)
+        return String(g.action || "")
+    }
+    return ""
+  }
+
+  function gestureRowLabel(fingers, direction) {
+    var action = gestureFor(fingers, direction)
+    return fingers + " fingers · " + direction + "   " + (action === "" ? "off" : action)
+  }
+
+  // Cycle a slot through: off -> catalog actions -> off. "off" removes the
+  // gesture line entirely, which is how Hyprland un-defines it.
+  function cycleGesture(fingers, direction) {
+    var ring = gestureRing
+    var current = gestureFor(fingers, direction)
+    var index = 0
+    for (var i = 0; i < ring.length; i++) {
+      if ((ring[i] === "off" && current === "") || (ring[i] !== "off" && ring[i] === current)) {
+        index = i
+        break
+      }
+    }
+    var next = ring[(index + 1) % ring.length]
+    if (gestureProc.running) return
+    if (next === "off") {
+      gestureProc.command = ["bash", helperScript, "gesture-unset",
+                             "--fingers", String(fingers), "--direction", direction]
+    } else {
+      gestureProc.command = ["bash", helperScript, "gesture-set",
+                             "--fingers", String(fingers), "--direction", direction,
+                             "--action", next]
+    }
+    gestureProc.running = true
+  }
+
+  function handleGesture(output) {
+    var data
+    try { data = JSON.parse(String(output)) } catch (e) {
+      statusOk = false
+      statusText = "Invalid response from helper"
+      return
+    }
+    if (!data || data.ok !== true) {
+      statusOk = false
+      statusText = (data && data.error) ? String(data.error) : "Failed to change the gesture"
+      return
+    }
+    if (Array.isArray(data.gestures)) gestures = data.gestures
+    var reloadOk = String(data.reload || "").replace(/\s+$/, "") === "ok"
+    statusOk = reloadOk
+    statusText = reloadOk ? "Gesture updated" : "Gesture applied, but the Hyprland reload failed"
   }
 
   function syncFromEntry() {
@@ -134,6 +219,8 @@ Panel {
     devices = Array.isArray(data.devices) ? data.devices : []
     primary = data.primary ? String(data.primary) : ""
     entries = Array.isArray(data.entries) ? data.entries : []
+    gestures = Array.isArray(data.gestures) ? data.gestures : []
+    gestureCatalog = (data.catalog && typeof data.catalog === "object") ? data.catalog : ({})
 
     var preferred = root.setting("deviceName", "")
     if (selectedDevice === "" || !deviceExists(selectedDevice)) {
@@ -323,6 +410,16 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
+  Process {
+    id: gestureProc
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleGesture(text)
+    }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
   Timer {
     id: applyTimer
     interval: 250
@@ -361,11 +458,10 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(360))
-    // No fixed height cap: with a trackpad selected the panel carries three
-    // toggles, a scroll slider and two presets on top of the device list and
-    // the motion controls. `fittedContentHeight` already clamps to the card
-    // space actually available on screen, so sizing to the content here keeps
-    // every row visible the way the same panel does for a mouse.
+    // The content now carries the device list, the motion controls, an optional
+    // trackpad block and the gesture list, so it can outgrow the screen.
+    // `fittedContentHeight` clamps to the card space actually available and the
+    // ScrollView below takes care of the rest, so nothing gets cut off.
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
@@ -373,9 +469,21 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
 
+      ScrollView {
+        id: scrollArea
+        anchors.fill: parent
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: contentColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        Binding {
+          target: scrollArea.contentItem
+          property: "interactive"
+          value: contentColumn.implicitHeight > scrollArea.height
+        }
+
       Column {
         id: contentColumn
-        width: parent.width
+        width: scrollArea.availableWidth
         spacing: Style.space(10)
 
         Text {
@@ -683,6 +791,46 @@ Panel {
           }
         }
 
+        PanelSeparator { foreground: root.contentForeground }
+
+        PanelSectionHeader {
+          text: "GESTURES"
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: "Global trackpad shortcuts. Click a row to cycle its action; \"off\" removes it. Gestures you add from the CLI stay untouched."
+          color: root.dimForeground
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+
+          Repeater {
+            model: root.gestureSlots
+
+            Button {
+              required property var modelData
+              width: contentColumn.width
+              text: root.gestureRowLabel(modelData.fingers, modelData.direction)
+              selected: root.gestureFor(modelData.fingers, modelData.direction) !== ""
+              bordered: true
+              leftAlign: true
+              foreground: root.contentForeground
+              accent: Color.accent
+              fontFamily: root.contentFontFamily
+              fontSize: Style.font.caption
+              onClicked: root.cycleGesture(modelData.fingers, modelData.direction)
+            }
+          }
+        }
+
         Text {
           width: parent.width
           text: root.statusText
@@ -691,6 +839,7 @@ Panel {
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
         }
+      }
       }
     }
   }

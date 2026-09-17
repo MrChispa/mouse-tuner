@@ -237,6 +237,31 @@ bin/mouse-tuner.sh battery --device ps/2-generic-mouse
 # {"ok":true,"device":"ps/2-generic-mouse","battery":null}
 ```
 
+### Gestos
+
+El panel trae una sección **GESTURES** para los atajos globales del trackpad:
+
+- Cada fila es un gesto (dedos + dirección). **Clic cicla la acción**: `off` → `workspace` → `move` → `resize` → `close` → `fullscreen` → `float` → `special` → `cursor_zoom` → `scroll_move` → `off`.
+- `off` **desactiva** el gesto (borra su línea del archivo).
+- El panel gestiona 6 huecos curados (3 y 4 dedos: horizontal, vertical, pinch). Los gestos que agregues por CLI con otras combinaciones **no se tocan** desde el panel.
+
+> **Nota (3 dedos):** si usas el gesto de 3 dedos para cambiar de workspace, deja `drag_3fg = 0` en `input:touchpad`. El "arrastrar con 3 dedos" pelea con el swipe y libinput registra `invalid gesture event GESTURE_EVENT_3FG_DRAG_OR_SWIPE_TIMEOUT`, lo que hace las gestures poco fiables.
+
+Desde la CLI puedes configurar cualquier combinación (2–9 dedos, con modificadores y extras):
+
+```bash
+bin/mouse-tuner.sh gestures                    # lista los gestos activos + el catálogo
+bin/mouse-tuner.sh gesture-set --fingers 3 --direction vertical --action special --workspace-name scratchpad
+bin/mouse-tuner.sh gesture-set --fingers 4 --direction up --action fullscreen
+bin/mouse-tuner.sh gesture-set --fingers 4 --direction down --mods SUPER --action close
+bin/mouse-tuner.sh gesture-set --fingers 2 --direction pinch --action cursor_zoom --zoom-level 2.0 --mode mult
+bin/mouse-tuner.sh gesture-unset --fingers 4 --direction up   # desactiva uno
+bin/mouse-tuner.sh gestures-reset                             # borra todo el bloque
+```
+
+Direcciones: `horizontal`, `vertical`, `left`, `right`, `up`, `down`, `swipe`, `pinch`, `pinchin`, `pinchout`.
+Acciones: `workspace`, `move`, `resize`, `special`, `close`, `fullscreen`, `float`, `cursor_zoom`, `scroll_move`, `none`.
+
 ### Limitación conocida: Bluetooth y suspensión
 
 Con Bluetooth, después de suspender el equipo el Magic Trackpad 2 puede:
@@ -506,6 +531,31 @@ bin/mouse-tuner.sh battery --device apple-inc.-magic-trackpad
 bin/mouse-tuner.sh battery --device ps/2-generic-mouse
 # {"ok":true,"device":"ps/2-generic-mouse","battery":null}
 ```
+
+### Gestures
+
+The panel ships a **GESTURES** section for the global trackpad shortcuts:
+
+- Each row is one gesture (fingers + direction). **Clicking it cycles the action**: `off` → `workspace` → `move` → `resize` → `close` → `fullscreen` → `float` → `special` → `cursor_zoom` → `scroll_move` → `off`.
+- `off` **disables** the gesture (its line is removed from the file).
+- The panel owns 6 curated slots (3 and 4 fingers: horizontal, vertical, pinch). Gestures you add from the CLI with other combinations are **never touched** by the panel.
+
+> **3-finger note:** if you use the 3-finger swipe to change workspaces, keep `drag_3fg = 0` in `input:touchpad`. Three-finger drag fights the swipe and libinput logs `invalid gesture event GESTURE_EVENT_3FG_DRAG_OR_SWIPE_TIMEOUT`, which makes gestures unreliable.
+
+The CLI can configure any combination (2–9 fingers, with modifiers and extras):
+
+```bash
+bin/mouse-tuner.sh gestures                    # list active gestures + the catalog
+bin/mouse-tuner.sh gesture-set --fingers 3 --direction vertical --action special --workspace-name scratchpad
+bin/mouse-tuner.sh gesture-set --fingers 4 --direction up --action fullscreen
+bin/mouse-tuner.sh gesture-set --fingers 4 --direction down --mods SUPER --action close
+bin/mouse-tuner.sh gesture-set --fingers 2 --direction pinch --action cursor_zoom --zoom-level 2.0 --mode mult
+bin/mouse-tuner.sh gesture-unset --fingers 4 --direction up   # disable one
+bin/mouse-tuner.sh gestures-reset                             # drop the whole block
+```
+
+Directions: `horizontal`, `vertical`, `left`, `right`, `up`, `down`, `swipe`, `pinch`, `pinchin`, `pinchout`.
+Actions: `workspace`, `move`, `resize`, `special`, `close`, `fullscreen`, `float`, `cursor_zoom`, `scroll_move`, `none`.
 
 ### Known limitation: Bluetooth and suspend
 
