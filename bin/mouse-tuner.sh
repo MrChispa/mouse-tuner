@@ -17,6 +17,8 @@
 #   gesture-unset --fingers N --direction D [--mods M]
 #                                            remove one gesture
 #   gestures-reset                           delete the whole gestures block
+#   gestures-import                          take over hl.gesture lines defined
+#                                            outside the managed block
 #
 # `set` flags (all optional; unspecified fields keep their stored value):
 #   --profile <flat|adaptive>                acceleration profile
@@ -39,6 +41,13 @@
 # byte of that file, and every other block in it, is left untouched. After each
 # write it reloads Hyprland; if Hyprland reports any config error it restores
 # the previous file byte for byte and fails rather than leaving a broken config.
+#
+# Hyprland keeps the FIRST definition of a gesture and ignores later ones. A
+# hand-written hl.gesture(...) outside this tool's block (usually above it)
+# therefore shadows the managed line: the panel looks dead and Hyprland logs
+# "Gesture will be overshadowed by a previous gesture". The helper reports such
+# lines as `unmanaged` and `gestures-import` moves them inside the block so
+# there is a single source of truth.
 set -euo pipefail
 
 CONFIG="${HOME}/.config/hypr/input.lua"
@@ -395,15 +404,17 @@ entries_json() {
 }
 
 # Rewrite CONFIG so the managed region contains `body` (or is removed when body
-# is empty). Lines outside the markers are copied through unchanged. Returns
+# is empty). Lines outside the markers are copied through unchanged. An optional
+# 4th argument reads from another file instead of CONFIG (used by
+# gestures-import, which first filters out the lines it is taking over). Returns
 # non-zero instead of exiting so the caller can clean up first.
 write_managed() {
-  local body=${1-} start="${2:-$START_MARKER}" end="${3:-$END_MARKER}"
+  local body=${1-} start="${2:-$START_MARKER}" end="${3:-$END_MARKER}" src="${4-}"
   local dir input tmp
   dir="$(dirname "$CONFIG")"
   mkdir -p "$dir"
-  input="$CONFIG"
-  [[ -f $CONFIG ]] || input=/dev/null
+  input="${src:-$CONFIG}"
+  [[ -f $input ]] || input=/dev/null
 
   tmp="$(mktemp "$dir/.input.lua.mouse-tuner.XXXXXX")" || return 1
   if ! awk -v s="$start" -v e="$end" -v body="$body" -v comment="$BLOCK_COMMENT" '
@@ -491,7 +502,7 @@ abort_with() {
 # reloaded again, and the command fails with the Hyprland error text. On
 # success it prints the reload result.
 apply_block() {
-  local body="$1" start="${2:-$START_MARKER}" end="${3:-$END_MARKER}"
+  local body="$1" start="${2:-$START_MARKER}" end="${3:-$END_MARKER}" src="${4-}"
   local dir prev prev_existed=0 tmp errs reload_out
   dir="$(dirname "$CONFIG")"
   mkdir -p "$dir"
@@ -502,7 +513,7 @@ apply_block() {
     prev_existed=1
   fi
 
-  if ! write_managed "$body" "$start" "$end"; then
+  if ! write_managed "$body" "$start" "$end" "$src"; then
     rm -f "$prev"
     fail_json "failed to rewrite $CONFIG"
   fi
@@ -673,6 +684,90 @@ render_gestures_body() {
   done
 }
 
+# --- unmanaged gestures ------------------------------------------------------
+#
+# Every hl.gesture(...) line that is NOT between the gestures markers belongs to
+# the user, and the first one in the file wins. The panel must know about them:
+# `gestures` and `status` report them as `unmanaged`, gesture-set/unset refuse
+# to fight them, and `gestures-import` takes them over.
+
+# Print "<line number>\t<raw line>" for each unmanaged hl.gesture(...) line.
+unmanaged_gesture_lines() {
+  [[ -f $CONFIG ]] || return 0
+  awk -v s="$GESTURE_START_MARKER" -v e="$GESTURE_END_MARKER" '
+    $0 == s { inblock = 1; next }
+    inblock && $0 == e { inblock = 0; next }
+    inblock { next }
+    /^[[:space:]]*hl\.gesture\(/ { printf "%d\t%s\n", NR, $0 }
+  ' "$CONFIG"
+}
+
+# Best-effort parse of one raw line into the U_* globals. Only the fields the
+# docs promise are extracted (fingers, direction, mods, action); the raw line is
+# always kept. Returns non-zero when the line is not a usable gesture (no
+# fingers or direction), so callers can skip it safely.
+U_LINE=''; U_RAW=''; U_F=''; U_D=''; U_M=''; U_ACTION=''
+parse_unmanaged_gesture() {
+  local lineno="$1" raw="$2" line
+  line="$(trim "$raw")"
+  [[ $line =~ $GESTURE_RE ]] || return 1
+
+  local inner="${BASH_REMATCH[1]}" pair f v
+  local kf='' kd='' km='' ka=''
+  local IFS=','
+  for pair in $inner; do
+    pair="$(trim "$pair")"
+    [[ $pair =~ $G_PAIR_RE ]] || continue
+    f="${BASH_REMATCH[1]}"
+    v="$(trim "${BASH_REMATCH[2]}")"
+    if [[ $v == \"*\" ]]; then v="${v#\"}"; v="${v%\"}"; fi
+    case "$f" in
+      fingers) kf="$v" ;;
+      direction) kd="$v" ;;
+      mods) km="$v" ;;
+      action) ka="$v" ;;
+    esac
+  done
+  [[ -n $kf && -n $kd ]] || return 1
+
+  U_LINE="$lineno"; U_RAW="$raw"; U_F="$kf"; U_D="$kd"; U_M="$km"; U_ACTION="$ka"
+  return 0
+}
+
+# JSON array of the unmanaged gestures, in file order.
+unmanaged_gestures_json() {
+  local lineno raw first=1 fingers_json
+  printf '['
+  while IFS=$'\t' read -r lineno raw; do
+    [[ -n ${lineno-} ]] || continue
+    parse_unmanaged_gesture "$lineno" "$raw" || continue
+    [[ $first -eq 1 ]] || printf ','
+    first=0
+    if [[ $U_F =~ ^[0-9]+$ ]]; then fingers_json="$U_F"
+    else fingers_json="\"$(json_escape "$U_F")\""
+    fi
+    printf '{"line":%s,"raw":"%s","fingers":%s,"direction":"%s"' \
+      "$U_LINE" "$(json_escape "$U_RAW")" "$fingers_json" "$(json_escape "$U_D")"
+    [[ -n $U_M ]] && printf ',"mods":"%s"' "$(json_escape "$U_M")"
+    [[ -n $U_ACTION ]] && printf ',"action":"%s"' "$(json_escape "$U_ACTION")"
+    printf '}'
+  done < <(unmanaged_gesture_lines)
+  printf ']'
+}
+
+# True when an unmanaged gesture already occupies the given slot
+# (fingers|direction|mods), in which case it shadows the managed one. On success
+# the U_* globals describe the offending line.
+find_unmanaged_slot() {
+  local tf="$1" td="$2" tm="${3-}" lineno raw
+  while IFS=$'\t' read -r lineno raw; do
+    [[ -n ${lineno-} ]] || continue
+    parse_unmanaged_gesture "$lineno" "$raw" || continue
+    [[ $U_F == "$tf" && $U_D == "$td" && $U_M == "$tm" ]] && return 0
+  done < <(unmanaged_gesture_lines)
+  return 1
+}
+
 gesture_json() { # key
   local key="$1" f
   split_g_key "$key"
@@ -741,9 +836,9 @@ cmd_status() {
   collect_devices
   load_entries
   load_gestures
-  printf '{"ok":true,"configPath":"%s","entries":%s,"devices":%s,"primary":"%s","catalog":%s,"gestures":%s}\n' \
+  printf '{"ok":true,"configPath":"%s","entries":%s,"devices":%s,"primary":"%s","catalog":%s,"gestures":%s,"unmanaged":%s}\n' \
     "$(json_escape "$CONFIG")" "$(entries_json)" "$DEVICES_JSON" "$(json_escape "$PRIMARY_NAME")" \
-    "$(g_catalog_json)" "$(gestures_json)"
+    "$(g_catalog_json)" "$(gestures_json)" "$(unmanaged_gestures_json)"
 }
 
 # Read-only lookup, so unlike `set`/`remove` it accepts any name (a missing or
@@ -924,7 +1019,8 @@ cmd_reset() {
 
 cmd_gestures() {
   load_gestures
-  printf '{"ok":true,"catalog":%s,"gestures":%s}\n' "$(g_catalog_json)" "$(gestures_json)"
+  printf '{"ok":true,"catalog":%s,"gestures":%s,"unmanaged":%s}\n' \
+    "$(g_catalog_json)" "$(gestures_json)" "$(unmanaged_gestures_json)"
 }
 
 parse_g_fingers() {
@@ -986,6 +1082,13 @@ cmd_gesture_set() {
 
   load_gestures
 
+  # An unmanaged gesture on the same slot wins (Hyprland keeps the first
+  # definition), so writing the managed one would silently do nothing. Fail with
+  # the fix instead of letting Hyprland's cryptic "overshadowed" error surface.
+  if find_unmanaged_slot "$fingers" "$direction" "$mods"; then
+    fail_json "this gesture is also defined outside Mouse Tuner's block ($(basename "$CONFIG") line $U_LINE) and would shadow the panel; run 'bin/mouse-tuner.sh gestures-import' to take it over"
+  fi
+
   # Merge: keep what the slot already had, then apply what was passed.
   [[ -n $action ]] && g_put "$fingers" "$direction" "$mods" action "$action"
   [[ -n $scale ]] && g_put "$fingers" "$direction" "$mods" scale "$scale"
@@ -1036,6 +1139,11 @@ cmd_gesture_unset() {
   [[ -n $direction ]] || fail_json "--direction is required"
 
   load_gestures
+  # Removing only the managed line would leave the unmanaged one in place, so
+  # the gesture would keep firing. Take it over first.
+  if find_unmanaged_slot "$fingers" "$direction" "$mods"; then
+    fail_json "this gesture is also defined outside Mouse Tuner's block ($(basename "$CONFIG") line $U_LINE); removing only the managed copy would not disable it — run 'bin/mouse-tuner.sh gestures-import' to take it over first"
+  fi
   local key
   key="$(g_key "$fingers" "$direction" "$mods")"
   local removed=false o
@@ -1063,6 +1171,67 @@ cmd_gestures_reset() {
     "$(json_escape "$CONFIG")" "$(json_escape "$reload_out")"
 }
 
+# Take over every hl.gesture(...) line that lives outside the managed block.
+# The managed copy wins on a slot collision; the unmanaged duplicate is still
+# removed from the file so only one definition remains. This is the only
+# operation that deletes lines outside the managed regions, and only the
+# gesture lines it is taking over.
+cmd_gestures_import() {
+  load_gestures
+
+  # Snapshot the unmanaged lines first: the file changes below.
+  local -a u_lines=() u_f=() u_d=() u_m=() u_action=()
+  local lineno raw
+  while IFS=$'\t' read -r lineno raw; do
+    [[ -n ${lineno-} ]] || continue
+    parse_unmanaged_gesture "$lineno" "$raw" || continue
+    u_lines+=("$U_LINE"); u_f+=("$U_F"); u_d+=("$U_D"); u_m+=("$U_M"); u_action+=("$U_ACTION")
+  done < <(unmanaged_gesture_lines)
+
+  local imported=0 skipped=0 i key seen o
+  local -a drop=()
+  for i in "${!u_lines[@]}"; do
+    key="$(g_key "${u_f[$i]}" "${u_d[$i]}" "${u_m[$i]}")"
+    seen=0
+    for o in "${G_ORDER[@]:-}"; do [[ $o == "$key" ]] && seen=1; done
+    if (( seen )); then
+      # Already managed: the managed entry is authoritative.
+      skipped=$((skipped + 1))
+    else
+      G_ORDER+=("$key")
+      [[ -n ${u_action[$i]} ]] \
+        && g_put "${u_f[$i]}" "${u_d[$i]}" "${u_m[$i]}" action "${u_action[$i]}"
+      imported=$((imported + 1))
+    fi
+    drop+=("${u_lines[$i]}")
+  done
+
+  local reload_out="ok"
+  if (( ${#drop[@]} > 0 )); then
+    # Filter the taken-over lines into a temp copy, then run the normal managed
+    # write + reload + rollback against it. Everything else is copied through.
+    local dir filtered
+    dir="$(dirname "$CONFIG")"
+    filtered="$(mktemp "$dir/.mouse-tuner.import.XXXXXX")" || fail_json "cannot create a temporary file"
+    if ! awk -v drop="${drop[*]}" '
+      BEGIN { n = split(drop, D, " "); for (i = 1; i <= n; i++) del[D[i] + 0] = 1 }
+      !del[NR]
+    ' "$CONFIG" >"$filtered"; then
+      rm -f "$filtered"
+      fail_json "failed to rewrite $CONFIG"
+    fi
+    if ! reload_out="$(apply_block "$(render_gestures_body)" "$GESTURE_START_MARKER" "$GESTURE_END_MARKER" "$filtered")"; then
+      rm -f "$filtered"
+      abort_with "$reload_out"
+    fi
+    rm -f "$filtered"
+  fi
+
+  printf '{"ok":true,"imported":%d,"skipped":%d,"configPath":"%s","reload":"%s","gestures":%s,"unmanaged":%s}\n' \
+    "$imported" "$skipped" "$(json_escape "$CONFIG")" "$(json_escape "$reload_out")" \
+    "$(gestures_json)" "$(unmanaged_gestures_json)"
+}
+
 usage() {
   cat <<'EOF'
 Mouse Tuner helper
@@ -1079,6 +1248,8 @@ Usage:
   mouse-tuner.sh gesture-set --fingers <2..9> --direction <dir> [flags]
   mouse-tuner.sh gesture-unset --fingers <2..9> --direction <dir> [--mods M]
   mouse-tuner.sh gestures-reset
+  mouse-tuner.sh gestures-import        take over hl.gesture lines defined outside
+                                        the managed block (they shadow the panel)
 
 gesture-set flags (only what you pass is written):
   --action <workspace|move|resize|special|close|fullscreen|float|cursor_zoom|scroll_move|none>
@@ -1121,6 +1292,7 @@ main() {
     gesture-set) with_lock cmd_gesture_set "$@" ;;
     gesture-unset) with_lock cmd_gesture_unset "$@" ;;
     gestures-reset) with_lock cmd_gestures_reset "$@" ;;
+    gestures-import) with_lock cmd_gestures_import "$@" ;;
     ''|-h|--help) usage ;;
     *) fail_json "unknown subcommand: $cmd" ;;
   esac

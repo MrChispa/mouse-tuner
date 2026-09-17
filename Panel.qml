@@ -74,6 +74,17 @@ Panel {
   property var gestures: []
   property var gestureCatalog: ({})
 
+  // Gestures the user wrote by hand outside Mouse Tuner's block. Hyprland keeps
+  // the first definition in the file, so those lines shadow the panel's own
+  // gestures: the controls look dead. Detection is reported by the helper as
+  // `unmanaged` in both `gestures` and `status`.
+  property var unmanaged: []
+  readonly property int unmanagedCount: unmanaged.length
+  // Surface the problem instead of hiding it behind a collapsed section: the
+  // first time detection reports something, open GESTURES once. The user can
+  // still collapse it afterwards (assigning a same-length array does not re-fire).
+  onUnmanagedCountChanged: if (unmanagedCount > 0) gesturesExpanded = true
+
   readonly property var gestureSlots: [
     { fingers: 3, direction: "horizontal" },
     { fingers: 3, direction: "vertical" },
@@ -132,6 +143,11 @@ Panel {
       traditionalPreset: "Traditional",
       tapGlobalHint: "Tap-to-click is a global touchpad setting in Hyprland, so it is not per-device.",
       gesturesHint: "Global trackpad shortcuts. Click a row to cycle its action; \"off\" removes it. Gestures you add from the CLI stay untouched.",
+      gesturesUnmanaged: "{n} gesture(s) are defined outside Mouse Tuner and would shadow the panel.",
+      importGestures: "Import",
+      importDone: "Gestures imported",
+      failedImport: "Failed to import gestures",
+      unmanagedShort: "{n} unmanaged",
       fingers: "fingers",
       dir_horizontal: "horizontal",
       dir_vertical: "vertical",
@@ -182,6 +198,11 @@ Panel {
       traditionalPreset: "Tradicional",
       tapGlobalHint: "El toque para hacer clic es un ajuste global de Hyprland, así que no se configura por dispositivo.",
       gesturesHint: "Atajos globales del trackpad. Haz clic en una fila para cambiar su acción; \"off\" la elimina. Los gestos añadidos desde la CLI no se modifican.",
+      gesturesUnmanaged: "{n} gesto(s) están definidos fuera de Mouse Tuner y anularían el panel.",
+      importGestures: "Importar",
+      importDone: "Gestos importados",
+      failedImport: "No se pudieron importar los gestos",
+      unmanagedShort: "{n} sin gestionar",
       fingers: "dedos",
       dir_horizontal: "horizontal",
       dir_vertical: "vertical",
@@ -325,7 +346,10 @@ Panel {
   }
 
   function gesturesSummary() {
-    return root.render(root.t("gesturesActive"), { n: root.gestures.length })
+    var summary = root.render(root.t("gesturesActive"), { n: root.gestures.length })
+    if (root.unmanagedCount > 0)
+      summary += " · " + root.render(root.t("unmanagedShort"), { n: root.unmanagedCount })
+    return summary
   }
 
   function heroDeviceLabel() {
@@ -407,8 +431,33 @@ Panel {
       return
     }
     if (Array.isArray(data.gestures)) gestures = data.gestures
+    if (Array.isArray(data.unmanaged)) unmanaged = data.unmanaged
     var reloadOk = String(data.reload || "").replace(/\s+$/, "") === "ok"
     if (reloadOk) setNotice("gestureUpdated", true)
+    else setNotice("gestureReloadFailed", false)
+  }
+
+  function importGestures() {
+    if (importProc.running) return
+    importProc.command = ["bash", helperScript, "gestures-import"]
+    importProc.running = true
+  }
+
+  function handleImport(output) {
+    var data
+    try { data = JSON.parse(String(output)) } catch (e) {
+      setNotice("invalidResponse", false)
+      return
+    }
+    if (!data || data.ok !== true) {
+      setNotice(data && data.error ? "raw" : "failedImport", false,
+                data && data.error ? { text: String(data.error) } : ({}))
+      return
+    }
+    if (Array.isArray(data.gestures)) gestures = data.gestures
+    unmanaged = Array.isArray(data.unmanaged) ? data.unmanaged : []
+    var reloadOk = String(data.reload || "").replace(/\s+$/, "") === "ok"
+    if (reloadOk) setNotice("importDone", true)
     else setNotice("gestureReloadFailed", false)
   }
 
@@ -444,6 +493,7 @@ Panel {
     entries = Array.isArray(data.entries) ? data.entries : []
     gestures = Array.isArray(data.gestures) ? data.gestures : []
     gestureCatalog = (data.catalog && typeof data.catalog === "object") ? data.catalog : ({})
+    unmanaged = Array.isArray(data.unmanaged) ? data.unmanaged : []
 
     var preferred = root.setting("deviceName", "")
     if (selectedDevice === "" || !deviceExists(selectedDevice)) {
@@ -626,6 +676,16 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.handleGesture(text)
+    }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  Process {
+    id: importProc
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleImport(text)
     }
     stderr: StdioCollector { waitForEnd: true }
   }
@@ -992,6 +1052,38 @@ Panel {
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+            }
+
+            // Unmanaged gestures live outside the managed block and win over it
+            // (Hyprland keeps the first definition), so the rows below would do
+            // nothing. Warn and offer the one-click fix.
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              visible: root.unmanagedCount > 0
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: root.render(root.t("gesturesUnmanaged"), { n: root.unmanagedCount })
+                color: Color.urgent
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Button {
+                width: parent.width
+                text: root.t("importGestures")
+                bordered: true
+                leftAlign: true
+                foreground: root.contentForeground
+                accent: Color.accent
+                fontFamily: root.contentFontFamily
+                fontSize: Style.font.caption
+                enabled: !importProc.running
+                onClicked: root.importGestures()
+              }
             }
 
             Column {

@@ -260,6 +260,8 @@ El panel trae una sección **GESTURES** para los atajos globales del trackpad:
 - `off` **desactiva** el gesto (borra su línea del archivo).
 - El panel gestiona 6 huecos curados (3 y 4 dedos: horizontal, vertical, pinch). Los gestos que agregues por CLI con otras combinaciones **no se tocan** desde el panel.
 
+> **Aviso — gestos duplicados:** si ya tenías líneas `hl.gesture(...)` en tu configuración de Hyprland, quedan **antes** que las de Mouse Tuner. Hyprland aplica la **primera** definición y reporta `Gesture will be overshadowed by a previous gesture`, así que los controles del panel parecen no hacer nada. La solución es `bin/mouse-tuner.sh gestures-import` (o el botón **Importar** del panel), que mueve esas líneas al bloque de Mouse Tuner y deja una sola fuente de verdad. El asistente ahora detecta y reporta esos gestos externos.
+
 > **Nota (3 dedos):** si usas el gesto de 3 dedos para cambiar de workspace, deja `drag_3fg = 0` en `input:touchpad`. El "arrastrar con 3 dedos" pelea con el swipe y libinput registra `invalid gesture event GESTURE_EVENT_3FG_DRAG_OR_SWIPE_TIMEOUT`, lo que hace las gestures poco fiables.
 
 Desde la CLI puedes configurar cualquier combinación (2–9 dedos, con modificadores y extras):
@@ -272,6 +274,7 @@ bin/mouse-tuner.sh gesture-set --fingers 4 --direction down --mods SUPER --actio
 bin/mouse-tuner.sh gesture-set --fingers 2 --direction pinch --action cursor_zoom --zoom-level 2.0 --mode mult
 bin/mouse-tuner.sh gesture-unset --fingers 4 --direction up   # desactiva uno
 bin/mouse-tuner.sh gestures-reset                             # borra todo el bloque
+bin/mouse-tuner.sh gestures-import                            # adopta los gestos definidos fuera del bloque
 ```
 
 Direcciones: `horizontal`, `vertical`, `left`, `right`, `up`, `down`, `swipe`, `pinch`, `pinchin`, `pinchout`.
@@ -299,6 +302,7 @@ Mientras el dispositivo no se re-inicialice, Hyprland puede listarlo sin gestos 
 | --------------------------------- | ------------------------------------------------------------------------ |
 | No aparecen dispositivos          | Ejecuta `hyprctl devices` y revisa la sección `mice:`. Enciende el mouse. |
 | El ajuste no se aplica            | `hyprctl configerrors` debe estar vacío; luego `hyprctl reload`.          |
+| Los gestos del panel no hacen nada | Hay `hl.gesture(...)` fuera del bloque y gana el primero. Ejecuta `bin/mouse-tuner.sh gestures-import`. |
 | El icono no aparece en la barra   | `omarchy-shell shell rescanPlugins` o `omarchy restart shell`.            |
 | Un dispositivo es rechazado       | Su nombre tiene caracteres que el motor no escribe (`/`, comillas, `..`). |
 | Un ajuste es rechazado            | Solo se aceptan los campos de la tabla de la CLI; `tap-to-click` es global. |
@@ -568,6 +572,8 @@ The panel ships a **GESTURES** section for the global trackpad shortcuts:
 - `off` **disables** the gesture (its line is removed from the file).
 - The panel owns 6 curated slots (3 and 4 fingers: horizontal, vertical, pinch). Gestures you add from the CLI with other combinations are **never touched** by the panel.
 
+> **Warning — duplicate gestures:** if you already had `hl.gesture(...)` lines in your Hyprland config, they come **first** in the file. Hyprland applies the **first** definition and reports `Gesture will be overshadowed by a previous gesture`, so the panel's controls appear to do nothing. The fix is `bin/mouse-tuner.sh gestures-import` (or the panel's **Import** button), which moves those lines into Mouse Tuner's block so there is a single source of truth. The helper now detects and reports those external gestures.
+
 > **3-finger note:** if you use the 3-finger swipe to change workspaces, keep `drag_3fg = 0` in `input:touchpad`. Three-finger drag fights the swipe and libinput logs `invalid gesture event GESTURE_EVENT_3FG_DRAG_OR_SWIPE_TIMEOUT`, which makes gestures unreliable.
 
 The CLI can configure any combination (2–9 fingers, with modifiers and extras):
@@ -580,6 +586,7 @@ bin/mouse-tuner.sh gesture-set --fingers 4 --direction down --mods SUPER --actio
 bin/mouse-tuner.sh gesture-set --fingers 2 --direction pinch --action cursor_zoom --zoom-level 2.0 --mode mult
 bin/mouse-tuner.sh gesture-unset --fingers 4 --direction up   # disable one
 bin/mouse-tuner.sh gestures-reset                             # drop the whole block
+bin/mouse-tuner.sh gestures-import                            # take over gestures defined outside the block
 ```
 
 Directions: `horizontal`, `vertical`, `left`, `right`, `up`, `down`, `swipe`, `pinch`, `pinchin`, `pinchout`.
@@ -607,6 +614,7 @@ Until the device re-initializes, Hyprland may list it without gestures even thou
 | ------------------------------ | ----------------------------------------------------------------------- |
 | No devices listed              | Run `hyprctl devices` and check the `mice:` section. Turn the mouse on.  |
 | Settings did not apply         | `hyprctl configerrors` must be empty; then `hyprctl reload`.             |
+| Gestures do nothing            | An `hl.gesture(...)` outside the block wins. Run `bin/mouse-tuner.sh gestures-import`. |
 | Widget missing from the bar    | `omarchy-shell shell rescanPlugins` or `omarchy restart shell`.          |
 | A device is rejected           | Its name contains characters the engine refuses (`/`, quotes, `..`).     |
 | A setting is rejected          | Only the fields in the CLI table are accepted; `tap-to-click` is global. |
