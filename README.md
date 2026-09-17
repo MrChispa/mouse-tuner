@@ -57,6 +57,8 @@ Mouse Tuner escribe exactamente eso, para el dispositivo que elijas, desde la ba
 - 💾 **Persistente**: se guarda en tu config de Hyprland, no solo en memoria.
 - 🖱️ **Por dispositivo**: solo cambia el puntero que eliges; el resto queda intacto.
 - 🖐️ **Trackpads soportados**: sección propia para trackpads (Magic Trackpad 2 incluido) con natural scrolling, clickfinger, disable-while-typing y velocidad de scroll.
+- 🧭 **Panel plegable y escaneable**: secciones **DEVICE / MOTION / TRACKPAD / GESTURES** que se pliegan al hacer clic, cada una con un **resumen en vivo** en su encabezado (dispositivo + batería, perfil · sensibilidad, etc.). El pie con *Restablecer dispositivo* y la línea de estado queda siempre visible.
+- 🌐 **Bilingüe (EN/ES)**: el botón **EN·ES** del encabezado cambia todos los textos al instante y guarda la preferencia en los ajustes del widget (`language`); también configurable con `omarchy bar set io.github.mrchispa.mouse-tuner language ES`.
 - 🔋 **Batería cuando el kernel la expone**: el nivel del dispositivo seleccionado (el Magic Trackpad 2 por Bluetooth, por ejemplo) aparece junto a su nombre, leído de `power_supply` del kernel y **sin `root`**.
 - ⚡ **Motor CLI independiente** (`bin/mouse-tuner.sh`), usable sin la barra.
 - 🔒 **Escritura atómica con lock**: nada fuera de su bloque se toca, byte a byte.
@@ -104,20 +106,31 @@ omarchy-shell shell rescanPlugins
 ## Uso
 
 1. **Clic** en el icono del mouse en la barra (tooltip: *Mouse Tuner*).
-2. Elige el **dispositivo** que quieres ajustar. Los touchpad se marcan como *(touchpad)*.
-3. Elige un **preset**:
+2. El **encabezado** muestra el dispositivo activo, su batería (si el kernel la expone) y el botón **EN/ES**. Púlsalo para cambiar el idioma del panel al instante; la elección se guarda en los ajustes del widget.
+3. El resto de controles vive en **secciones plegables** con un **resumen en vivo** en cada encabezado:
 
-   | Preset       | Perfil     | Sensibilidad | Para qué                         |
-   | ------------ | ---------- | ------------ | -------------------------------- |
-   | **Precise**  | `flat`     | `-0.35`      | Trackballs y apuntado fino       |
-   | **Balanced** | `flat`     | `-0.15`      | Punto medio                      |
-   | **Default**  | `adaptive` | `0.00`       | Comportamiento original de libinput |
+   | Sección      | Estado inicial            | Resumen que muestra siempre                  |
+   | ------------ | ------------------------- | -------------------------------------------- |
+   | **DEVICE**   | abierta                   | dispositivo seleccionado + batería           |
+   | **MOTION**   | plegada                   | perfil · sensibilidad                        |
+   | **TRACKPAD** | plegada (solo trackpads)  | natural/tradicional · clickfinger · scroll   |
+   | **GESTURES** | plegada                   | número de gestos activos                     |
 
-4. O arrastra el **slider** de sensibilidad (`-1.00` a `1.00`). Se aplica solo.
-5. Si el dispositivo es un **trackpad**, aparece además la sección **TRACKPAD** (ver más abajo).
-6. **Reset device** elimina el ajuste y devuelve ese dispositivo al default del sistema.
+   Haz clic en el encabezado de una sección para abrirla o cerrarla. El pie (`Restablecer dispositivo` y la línea de estado) permanece siempre visible.
+4. Elige el **dispositivo** que quieres ajustar. Los touchpad se marcan como *(touchpad)*.
+5. En **MOVIMIENTO**, elige un **preset**:
 
-El panel muestra el estado activo, por ejemplo `flat · -0.30` en un mouse o `natural off · clickfinger on · scroll ×0.80` en un trackpad.
+   | Preset           | Perfil     | Sensibilidad | Para qué                         |
+   | ---------------- | ---------- | ------------ | -------------------------------- |
+   | **Preciso**      | `flat`     | `-0.35`      | Trackballs y apuntado fino       |
+   | **Equilibrado**  | `flat`     | `-0.15`      | Punto medio                      |
+   | **Predeterminado** | `adaptive` | `0.00`     | Comportamiento original de libinput |
+
+6. O arrastra el **slider** de sensibilidad (`-1.00` a `1.00`). Se aplica solo.
+7. Si el dispositivo es un **trackpad**, abre la sección **TRACKPAD** (ver más abajo).
+8. **Restablecer dispositivo** elimina el ajuste y devuelve ese dispositivo al default del sistema.
+
+Cada resumen de sección muestra el estado activo sin abrirla, por ejemplo `flat · -0.15` en MOVIMIENTO, `tradicional · clickfinger sí · 1.00` en TRACKPAD o `2 activos` en GESTOS.
 
 ---
 
@@ -352,6 +365,8 @@ Mouse Tuner writes exactly that, for the device you choose, from the bar.
 - 💾 **Persistent**: written into your Hyprland config, not just memory.
 - 🖱️ **Per device**: only the pointer you pick changes; everything else stays as it was.
 - 🖐️ **Trackpad support**: a dedicated section for trackpads (Magic Trackpad 2 included) with natural scrolling, clickfinger, disable-while-typing and scroll speed.
+- 🧭 **Collapsible, scannable panel**: **DEVICE / MOTION / TRACKPAD / GESTURES** sections that fold on click, each with a **live summary** in its header (device + battery, profile · sensitivity, and so on). The footer with *Reset device* and the status line stays visible at all times.
+- 🌐 **Bilingual (EN/ES)**: the **EN·ES** button in the header switches every label instantly and stores the choice in the widget settings (`language`); it is also settable with `omarchy bar set io.github.mrchispa.mouse-tuner language ES`.
 - 🔋 **Battery when the kernel exposes one**: the selected device's level (the Magic Trackpad 2 over Bluetooth, for example) shows next to its name, read from the kernel `power_supply` with **no `root`**.
 - ⚡ **Standalone CLI engine** (`bin/mouse-tuner.sh`), usable without the bar.
 - 🔒 **Atomic, locked writes**: nothing outside its block is touched, byte for byte.
@@ -399,8 +414,19 @@ omarchy-shell shell rescanPlugins
 ## Usage
 
 1. **Click** the mouse icon in the bar (tooltip: *Mouse Tuner*).
-2. Pick the **device** you want to tune. Touchpads are marked *(touchpad)*.
-3. Pick a **preset**:
+2. The **header** shows the active device, its battery (when the kernel exposes one) and the **EN/ES** button. Press it to switch the panel language instantly; the choice is stored in the widget settings.
+3. Every other control lives in **collapsible sections** with a **live summary** in each header:
+
+   | Section      | Initial state             | Summary always shown                       |
+   | ------------ | ------------------------- | ------------------------------------------ |
+   | **DEVICE**   | expanded                  | selected device + battery                  |
+   | **MOTION**   | collapsed                 | profile · sensitivity                      |
+   | **TRACKPAD** | collapsed (trackpads only)| natural/traditional · clickfinger · scroll |
+   | **GESTURES** | collapsed                 | number of active gestures                  |
+
+   Click a section header to expand or collapse it. The footer (`Reset device` and the status line) stays visible at all times.
+4. Pick the **device** you want to tune. Touchpads are marked *(touchpad)*.
+5. In **MOTION**, pick a **preset**:
 
    | Preset       | Profile    | Sensitivity | Best for                        |
    | ------------ | ---------- | ----------- | ------------------------------- |
@@ -408,11 +434,11 @@ omarchy-shell shell rescanPlugins
    | **Balanced** | `flat`     | `-0.15`     | Middle ground                   |
    | **Default**  | `adaptive` | `0.00`      | libinput's original behaviour   |
 
-4. Or drag the **sensitivity slider** (`-1.00` to `1.00`). It applies on its own.
-5. If the device is a **trackpad**, a **TRACKPAD** section appears as well (see below).
-6. **Reset device** removes the override and returns that device to the system default.
+6. Or drag the **sensitivity slider** (`-1.00` to `1.00`). It applies on its own.
+7. If the device is a **trackpad**, expand the **TRACKPAD** section (see below).
+8. **Reset device** removes the override and returns that device to the system default.
 
-The panel shows the active state, for example `flat · -0.30` for a mouse or `natural off · clickfinger on · scroll ×0.80` for a trackpad.
+Each section summary reports the active state without opening it, for example `flat · -0.15` in MOTION, `traditional · clickfinger on · 1.00` in TRACKPAD, or `2 active` in GESTURES.
 
 ---
 

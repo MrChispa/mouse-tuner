@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -11,6 +12,12 @@ import qs.Ui
 // clickfinger, disable-while-typing, scroll factor). The heavy lifting
 // (validating, writing the managed block in ~/.config/hypr/input.lua,
 // reloading Hyprland) lives in bin/mouse-tuner.sh, which prints JSON.
+//
+// The panel is organized as collapsible sections with a live summary in each
+// header, so a collapsed section still reports its state. Collapsed by default
+// (except DEVICE) keeps the card short enough to need no scrolling; a pinned
+// footer holds Reset device and the status line. The whole UI is bilingual
+// (EN/ES) and the language is a persisted widget setting.
 Panel {
   id: root
   moduleName: "io.github.mrchispa.mouse-tuner"
@@ -37,14 +44,28 @@ Panel {
   property bool desiredClickfinger: false
   property bool desiredDisableWhileTyping: true
   property real desiredScrollFactor: 1.0
-  property string statusText: "Loading..."
-  property bool statusOk: true
+
+  // Status is split into a transient notice (an action result or an error) and
+  // a derived state line. The state line is a binding, so it re-renders on its
+  // own when the language changes; only the notice is set imperatively.
+  property bool loaded: false
+  property string noticeKey: ""
+  property var noticeArgs: ({})
+  property bool noticeOk: true
+
   property bool applyQueued: false
   // Which group of fields the next debounced apply should write. Each control
   // only sends its own fields, so the helper's upsert never adds a setting the
   // user did not touch.
   property bool pendingMotion: false
   property bool pendingTrackpad: false
+
+  // Collapsible section state. DEVICE starts open; the rest start collapsed so
+  // the first read of the panel is short and scannable.
+  property bool deviceExpanded: true
+  property bool motionExpanded: false
+  property bool trackpadExpanded: false
+  property bool gesturesExpanded: false
 
   // Gestures are global (not per device). The panel exposes a curated set of
   // slots; clicking a row cycles its action and "off" removes the gesture.
@@ -83,8 +104,158 @@ Panel {
     return null
   }
 
+  // ---------------------------------------------------------------- language
+  //
+  // The language is a persisted widget setting (`language`), read through a
+  // reactive property. `t()` reads `uiLang`, so every binding that calls it is
+  // dependency-tracked and re-renders the instant the user switches language.
+  readonly property string uiLang: String(root.setting("language", "EN")).toUpperCase() === "ES" ? "ES" : "EN"
+
+  readonly property var tr: ({
+    EN: {
+      loading: "Loading...",
+      noDevice: "No pointing device found",
+      pointerTuning: "Pointer tuning",
+      deviceSection: "DEVICE",
+      motionSection: "MOTION",
+      trackpadSection: "TRACKPAD",
+      gesturesSection: "GESTURES",
+      sensitivity: "SENSITIVITY",
+      scrollSpeed: "SCROLL SPEED",
+      precise: "Precise",
+      balanced: "Balanced",
+      defaultProfile: "Default",
+      naturalScroll: "Natural scrolling",
+      clickfinger: "Clickfinger (2-finger right click)",
+      disableWhileTyping: "Disable while typing",
+      appleLike: "Apple-like",
+      traditionalPreset: "Traditional",
+      tapGlobalHint: "Tap-to-click is a global touchpad setting in Hyprland, so it is not per-device.",
+      gesturesHint: "Global trackpad shortcuts. Click a row to cycle its action; \"off\" removes it. Gestures you add from the CLI stay untouched.",
+      fingers: "fingers",
+      dir_horizontal: "horizontal",
+      dir_vertical: "vertical",
+      dir_pinch: "pinch",
+      touchpadTag: "(touchpad)",
+      batteryCharging: "charging",
+      batteryFull: "full",
+      natural: "natural",
+      natOn: "natural",
+      natOff: "traditional",
+      scroll: "scroll",
+      stateOn: "on",
+      stateOff: "off",
+      gesturesActive: "{n} active",
+      overrideActive: "(override active)",
+      noOverride: "No override · device defaults",
+      resetDevice: "Reset device",
+      resetHint: "Remove this device's override and return it to system defaults.",
+      noDeviceSelected: "No device selected",
+      invalidResponse: "Invalid response from helper",
+      helperError: "Helper reported an error",
+      failedApply: "Failed to apply",
+      reloadFailed: "Applied, but the Hyprland reload failed",
+      failedReset: "Failed to reset the device",
+      gestureUpdated: "Gesture updated",
+      gestureReloadFailed: "Gesture applied, but the Hyprland reload failed",
+      failedGesture: "Failed to change the gesture",
+      raw: "{text}",
+      languageTooltip: "Language: EN — click to switch"
+    },
+    ES: {
+      loading: "Cargando...",
+      noDevice: "No se encontró ningún dispositivo señalador",
+      pointerTuning: "Ajuste del puntero",
+      deviceSection: "DISPOSITIVO",
+      motionSection: "MOVIMIENTO",
+      trackpadSection: "TRACKPAD",
+      gesturesSection: "GESTOS",
+      sensitivity: "SENSIBILIDAD",
+      scrollSpeed: "VELOCIDAD DE SCROLL",
+      precise: "Preciso",
+      balanced: "Equilibrado",
+      defaultProfile: "Predeterminado",
+      naturalScroll: "Desplazamiento natural",
+      clickfinger: "Clickfinger (clic derecho con 2 dedos)",
+      disableWhileTyping: "Desactivar al escribir",
+      appleLike: "Estilo Apple",
+      traditionalPreset: "Tradicional",
+      tapGlobalHint: "El toque para hacer clic es un ajuste global de Hyprland, así que no se configura por dispositivo.",
+      gesturesHint: "Atajos globales del trackpad. Haz clic en una fila para cambiar su acción; \"off\" la elimina. Los gestos añadidos desde la CLI no se modifican.",
+      fingers: "dedos",
+      dir_horizontal: "horizontal",
+      dir_vertical: "vertical",
+      dir_pinch: "pellizco",
+      touchpadTag: "(trackpad)",
+      batteryCharging: "cargando",
+      batteryFull: "completa",
+      natural: "natural",
+      natOn: "natural",
+      natOff: "tradicional",
+      scroll: "scroll",
+      stateOn: "sí",
+      stateOff: "no",
+      gesturesActive: "{n} activos",
+      overrideActive: "(ajuste activo)",
+      noOverride: "Sin ajuste · valores del sistema",
+      resetDevice: "Restablecer dispositivo",
+      resetHint: "Elimina el ajuste de este dispositivo y vuelve a los valores del sistema.",
+      noDeviceSelected: "Ningún dispositivo seleccionado",
+      invalidResponse: "Respuesta no válida del asistente",
+      helperError: "El asistente reportó un error",
+      failedApply: "No se pudo aplicar",
+      reloadFailed: "Aplicado, pero falló la recarga de Hyprland",
+      failedReset: "No se pudo restablecer el dispositivo",
+      gestureUpdated: "Gesto actualizado",
+      gestureReloadFailed: "Gesto aplicado, pero falló la recarga de Hyprland",
+      failedGesture: "No se pudo cambiar el gesto",
+      raw: "{text}",
+      languageTooltip: "Idioma: ES — haz clic para cambiar"
+    }
+  })
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  // Look up a string in the active language table. Reads `uiLang`, which is
+  // what makes bindings that call it re-evaluate on a language switch.
+  function t(key) {
+    var table = root.tr[root.uiLang] || root.tr.EN
+    var value = table[key]
+    if (value === undefined) value = root.tr.EN[key]
+    return value === undefined ? String(key) : String(value)
+  }
+
+  // Tiny "{name}" substitution for strings that carry runtime values.
+  function render(template, args) {
+    var out = String(template)
+    if (args) {
+      for (var k in args) out = out.split("{" + k + "}").join(String(args[k]))
+    }
+    return out
+  }
+
+  function setNotice(key, ok, args) {
+    noticeKey = String(key)
+    noticeOk = ok === true
+    noticeArgs = args || ({})
+  }
+
+  function clearNotice() {
+    noticeKey = ""
+    noticeArgs = ({})
+    noticeOk = true
+  }
+
+  function cycleLanguage() {
+    var next = root.uiLang === "ES" ? "EN" : "ES"
+    var s = root.settings || {}
+    var updated = {}
+    for (var k in s) updated[k] = s[k]
+    updated.language = next
+    root.settings = updated
+    Util.execDetached("omarchy bar set io.github.mrchispa.mouse-tuner language " + next)
+  }
 
   function deviceExists(name) {
     for (var i = 0; i < devices.length; i++) if (devices[i].name === name) return true
@@ -108,8 +279,8 @@ Panel {
     if (!isFinite(value)) return ""
     var suffix = " · " + value + "%"
     var state = String(info.battery.state || "").toLowerCase()
-    if (state === "charging") suffix += " · charging"
-    else if (state === "full") suffix += " · full"
+    if (state === "charging") suffix += " · " + root.t("batteryCharging")
+    else if (state === "full") suffix += " · " + root.t("batteryFull")
     return suffix
   }
 
@@ -126,8 +297,78 @@ Panel {
 
   function gestureRowLabel(fingers, direction) {
     var action = gestureFor(fingers, direction)
-    return fingers + " fingers · " + direction + "   " + (action === "" ? "off" : action)
+    return fingers + " " + root.t("fingers") + " · " + root.t("dir_" + direction)
+      + "   " + (action === "" ? "off" : action)
   }
+
+  // ------------------------------------------------------------- summaries
+  //
+  // Each summary feeds a collapsed section header so it still reports state.
+  // They are plain functions called from bindings, so they track every value
+  // they read (device, desired fields, gesture count, language).
+  function deviceSummary() {
+    var info = root.selectedDeviceInfo
+    if (!info) return ""
+    return String(info.label) + batterySuffix(info)
+  }
+
+  function motionSummary() {
+    if (root.selectedDevice === "") return ""
+    return String(root.desiredProfile) + " · " + Number(root.desiredSensitivity).toFixed(2)
+  }
+
+  function trackpadSummary() {
+    if (!root.selectedIsTrackpad) return ""
+    return (root.desiredNaturalScroll ? root.t("natOn") : root.t("natOff"))
+      + " · clickfinger " + (root.desiredClickfinger ? root.t("stateOn") : root.t("stateOff"))
+      + " · " + Number(root.desiredScrollFactor).toFixed(2)
+  }
+
+  function gesturesSummary() {
+    return root.render(root.t("gesturesActive"), { n: root.gestures.length })
+  }
+
+  function heroDeviceLabel() {
+    if (root.selectedDevice === "") return ""
+    var info = root.selectedDeviceInfo
+    var label = info ? String(info.label) : String(root.selectedDevice)
+    return label.length > 22 ? label.substring(0, 21) + "…" : label
+  }
+
+  function heroMeta() {
+    if (!root.loaded) return root.t("loading")
+    if (root.devices.length === 0) return root.t("noDevice")
+    return root.t("pointerTuning")
+  }
+
+  // The state line is a binding over the managed entries, so it localizes and
+  // updates without an imperative refresh.
+  readonly property string stateText: {
+    if (!root.loaded) return root.t("loading")
+    if (root.devices.length === 0) return root.t("noDevice")
+    if (root.selectedDevice === "") return root.t("noDeviceSelected")
+    var e = root.entryFor(root.selectedDevice)
+    if (!e) return root.t("noOverride")
+    var parts = []
+    if (e.accel_profile !== undefined)
+      parts.push(String(e.accel_profile) + " · " + Number(e.sensitivity).toFixed(2))
+    if (e.natural_scroll !== undefined)
+      parts.push(root.t("natural") + " " + (e.natural_scroll ? root.t("stateOn") : root.t("stateOff")))
+    if (e.clickfinger_behavior !== undefined)
+      parts.push("clickfinger " + (e.clickfinger_behavior ? root.t("stateOn") : root.t("stateOff")))
+    if (e.scroll_factor !== undefined)
+      parts.push(root.t("scroll") + " ×" + Number(e.scroll_factor).toFixed(2))
+    return parts.length > 0
+      ? parts.join(" · ") + " " + root.t("overrideActive")
+      : root.t("overrideActive")
+  }
+
+  readonly property string noticeText: root.noticeKey === ""
+    ? ""
+    : root.render(root.t(root.noticeKey), root.noticeArgs)
+
+  readonly property string statusLine: root.noticeText !== "" ? root.noticeText : root.stateText
+  readonly property bool statusOk: root.noticeText === "" ? true : root.noticeOk
 
   // Cycle a slot through: off -> catalog actions -> off. "off" removes the
   // gesture line entirely, which is how Hyprland un-defines it.
@@ -157,19 +398,18 @@ Panel {
   function handleGesture(output) {
     var data
     try { data = JSON.parse(String(output)) } catch (e) {
-      statusOk = false
-      statusText = "Invalid response from helper"
+      setNotice("invalidResponse", false)
       return
     }
     if (!data || data.ok !== true) {
-      statusOk = false
-      statusText = (data && data.error) ? String(data.error) : "Failed to change the gesture"
+      setNotice(data && data.error ? "raw" : "failedGesture", false,
+                data && data.error ? { text: String(data.error) } : ({}))
       return
     }
     if (Array.isArray(data.gestures)) gestures = data.gestures
     var reloadOk = String(data.reload || "").replace(/\s+$/, "") === "ok"
-    statusOk = reloadOk
-    statusText = reloadOk ? "Gesture updated" : "Gesture applied, but the Hyprland reload failed"
+    if (reloadOk) setNotice("gestureUpdated", true)
+    else setNotice("gestureReloadFailed", false)
   }
 
   function syncFromEntry() {
@@ -182,37 +422,20 @@ Panel {
     desiredScrollFactor = (e && e.scroll_factor !== undefined) ? Number(e.scroll_factor) : 1.0
   }
 
-  function updateStatusLine() {
-    var e = entryFor(selectedDevice)
-    if (!e) {
-      statusText = "No override · device defaults"
-      return
-    }
-    var parts = []
-    if (e.accel_profile !== undefined)
-      parts.push(String(e.accel_profile) + " · " + Number(e.sensitivity).toFixed(2))
-    if (e.natural_scroll !== undefined) parts.push("natural " + (e.natural_scroll ? "on" : "off"))
-    if (e.clickfinger_behavior !== undefined) parts.push("clickfinger " + (e.clickfinger_behavior ? "on" : "off"))
-    if (e.scroll_factor !== undefined) parts.push("scroll ×" + Number(e.scroll_factor).toFixed(2))
-    statusText = parts.length > 0
-      ? parts.join(" · ") + " (override active)"
-      : "Override active"
-  }
-
   function refresh() {
     if (!statusProc.running) statusProc.running = true
   }
 
   function handleStatus(output) {
+    loaded = true
     var data
     try { data = JSON.parse(String(output)) } catch (e) {
-      statusOk = false
-      statusText = "Invalid response from helper"
+      setNotice("invalidResponse", false)
       return
     }
     if (!data || data.ok !== true) {
-      statusOk = false
-      statusText = (data && data.error) ? String(data.error) : "Helper reported an error"
+      setNotice(data && data.error ? "raw" : "helperError", false,
+                data && data.error ? { text: String(data.error) } : ({}))
       return
     }
 
@@ -231,28 +454,20 @@ Panel {
     }
 
     syncFromEntry()
-    if (selectedDevice === "") {
-      statusOk = false
-      statusText = "No pointing device found"
-    } else {
-      statusOk = true
-      updateStatusLine()
-    }
+    clearNotice()
   }
 
   function selectDevice(name) {
     selectedDevice = String(name)
     syncFromEntry()
-    statusOk = true
-    updateStatusLine()
+    clearNotice()
     if (typeof Util !== "undefined" && Util && Util.execDetached)
       Util.execDetached("omarchy bar set io.github.mrchispa.mouse-tuner deviceName " + Util.shellQuote(String(name)))
   }
 
   function requestMotionApply() {
     if (selectedDevice === "") {
-      statusOk = false
-      statusText = "No device selected"
+      setNotice("noDeviceSelected", false)
       return
     }
     pendingMotion = true
@@ -261,8 +476,7 @@ Panel {
 
   function requestTrackpadApply() {
     if (selectedDevice === "") {
-      statusOk = false
-      statusText = "No device selected"
+      setNotice("noDeviceSelected", false)
       return
     }
     pendingTrackpad = true
@@ -328,13 +542,12 @@ Panel {
   function handleApply(output) {
     var data
     try { data = JSON.parse(String(output)) } catch (e) {
-      statusOk = false
-      statusText = "Invalid response from helper"
+      setNotice("invalidResponse", false)
       return
     }
     if (!data || data.ok !== true) {
-      statusOk = false
-      statusText = (data && data.error) ? String(data.error) : "Failed to apply"
+      setNotice(data && data.error ? "raw" : "failedApply", false,
+                data && data.error ? { text: String(data.error) } : ({}))
       return
     }
 
@@ -350,27 +563,24 @@ Panel {
 
     var reloadOk = String(data.reload || "").replace(/\s+$/, "") === "ok"
     syncFromEntry()
-    statusOk = reloadOk
-    updateStatusLine()
-    if (!reloadOk) statusText = "Applied, but the Hyprland reload failed"
+    if (reloadOk) clearNotice()
+    else setNotice("reloadFailed", false)
   }
 
   function handleRemove(output) {
     var data
     try { data = JSON.parse(String(output)) } catch (e) {
-      statusOk = false
-      statusText = "Invalid response from helper"
+      setNotice("invalidResponse", false)
       return
     }
     if (!data || data.ok !== true) {
-      statusOk = false
-      statusText = (data && data.error) ? String(data.error) : "Failed to reset the device"
+      setNotice(data && data.error ? "raw" : "failedReset", false,
+                data && data.error ? { text: String(data.error) } : ({}))
       return
     }
     if (Array.isArray(data.entries)) entries = data.entries
     syncFromEntry()
-    statusOk = true
-    statusText = "Override removed · device defaults"
+    clearNotice()
   }
 
   onOpenedChanged: if (opened) refresh()
@@ -458,11 +668,13 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(360))
-    // The content now carries the device list, the motion controls, an optional
-    // trackpad block and the gesture list, so it can outgrow the screen.
-    // `fittedContentHeight` clamps to the card space actually available and the
-    // ScrollView below takes care of the rest, so nothing gets cut off.
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
+    // The scroll content plus the pinned footer. `fittedContentHeight` clamps
+    // to the card space actually available; when several sections are expanded
+    // the ScrollView above the footer takes care of the overflow, so nothing
+    // gets clipped. Collapsed, the whole panel is shorter than the card and
+    // scrolls not at all.
+    contentHeight: panel.fittedContentHeight(
+      contentColumn.implicitHeight + footerColumn.implicitHeight + Style.space(12))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -471,7 +683,11 @@ Panel {
 
       ScrollView {
         id: scrollArea
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: footerColumn.top
+        anchors.bottomMargin: Style.space(12)
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: contentColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
@@ -481,366 +697,525 @@ Panel {
           value: contentColumn.implicitHeight > scrollArea.height
         }
 
-      Column {
-        id: contentColumn
-        width: scrollArea.availableWidth
-        spacing: Style.space(10)
-
-        Text {
-          text: "Mouse Tuner"
-          color: root.contentForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.title
-          font.bold: true
-        }
-
-        Text {
-          width: parent.width
-          text: "Acceleration and sensitivity are applied only to the selected device."
-          color: root.dimForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        PanelSeparator { foreground: root.contentForeground }
-
-        PanelSectionHeader {
-          text: "DEVICE"
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-        }
-
         Column {
-          width: parent.width
-          spacing: Style.space(4)
-          visible: root.devices.length > 0
+          id: contentColumn
+          width: scrollArea.availableWidth
+          spacing: Style.space(16)
 
-          Repeater {
-            model: root.devices
-
-            Button {
-              required property var modelData
-              required property int index
-              width: contentColumn.width
-              text: modelData.label
-                + (modelData.touchpad ? " (touchpad)" : "")
-                + (modelData.name === root.selectedDevice ? root.batterySuffix(modelData) : "")
-              selected: modelData.name === root.selectedDevice
-              bordered: true
-              leftAlign: true
-              foreground: root.contentForeground
-              accent: Color.accent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.caption
-              onClicked: root.selectDevice(modelData.name)
-            }
-          }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.devices.length === 0
-          text: "No pointing device found."
-          color: root.dimForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        PanelSeparator { foreground: root.contentForeground }
-
-        PanelSectionHeader {
-          text: "PRESETS"
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-
-          Repeater {
-            model: [
-              { label: "Precise", profile: "flat", sensitivity: -0.35 },
-              { label: "Balanced", profile: "flat", sensitivity: -0.15 },
-              { label: "Default", profile: "adaptive", sensitivity: 0.0 }
-            ]
-
-            Button {
-              required property var modelData
-              width: (contentColumn.width - Style.space(12)) / 3
-              text: modelData.label
-              selected: root.desiredProfile === modelData.profile
-                && Math.abs(root.desiredSensitivity - modelData.sensitivity) < 0.001
-              bordered: true
-              foreground: root.contentForeground
-              accent: Color.accent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.caption
-              onClicked: root.applyPreset(modelData.profile, modelData.sensitivity)
-            }
-          }
-        }
-
-        PanelSeparator { foreground: root.contentForeground }
-
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(sensitivityHeader.implicitHeight, sensitivityValue.implicitHeight)
-
-          PanelSectionHeader {
-            id: sensitivityHeader
-            text: "SENSITIVITY"
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-          }
-
-          Text {
-            id: sensitivityValue
-            text: Number(root.desiredSensitivity).toFixed(2)
-            color: root.contentForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-          }
-        }
-
-        PanelSlider {
-          id: sensitivitySlider
-          width: parent.width
-          bar: root.bar
-          minimum: -1
-          maximum: 1
-          step: 0.05
-          value: root.desiredSensitivity
-          enabled: root.selectedDevice !== ""
-          onMoved: function(v) {
-            root.desiredSensitivity = v
-            root.requestMotionApply()
-          }
-        }
-
-        // Trackpad-only options. Hyprland accepts these per device, unlike
-        // tap-to-click / tap-and-drag, which only exist globally.
-        Column {
-          id: trackpadSection
-          width: parent.width
-          visible: root.selectedIsTrackpad
-          height: visible ? implicitHeight : 0
-          spacing: Style.space(6)
-
-          PanelSeparator { foreground: root.contentForeground }
-
-          PanelSectionHeader {
-            text: "TRACKPAD"
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-          }
-
-          Toggle {
+          // ---------------------------------------------------------- hero
+          PanelHero {
+            id: hero
             width: parent.width
-            label: "Natural scrolling"
-            checked: root.desiredNaturalScroll
+            title: "Mouse Tuner"
+            detail: root.heroDeviceLabel()
+            meta: root.heroMeta()
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
-            onClicked: {
-              root.desiredNaturalScroll = !root.desiredNaturalScroll
-              root.requestTrackpadApply()
+            iconComponent: Component {
+              Text {
+                textFormat: Text.PlainText
+                text: "\udb80\udf7d"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.display
+              }
+            }
+            trailingControl: Component {
+              Button {
+                text: root.uiLang === "ES" ? "EN" : "ES"
+                tooltipText: root.t("languageTooltip")
+                bordered: true
+                foreground: root.dimForeground
+                accent: Color.accent
+                fontFamily: root.contentFontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.space(3)
+                onClicked: root.cycleLanguage()
+              }
             }
           }
 
-          Toggle {
-            width: parent.width
-            label: "Clickfinger (2-finger right click)"
-            checked: root.desiredClickfinger
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: {
-              root.desiredClickfinger = !root.desiredClickfinger
-              root.requestTrackpadApply()
-            }
-          }
+          // -------------------------------------------------------- device
+          Section {
+            title: root.t("deviceSection")
+            summary: root.deviceSummary()
+            expanded: root.deviceExpanded
+            first: true
+            onToggled: root.deviceExpanded = !root.deviceExpanded
 
-          Toggle {
-            width: parent.width
-            label: "Disable while typing"
-            checked: root.desiredDisableWhileTyping
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: {
-              root.desiredDisableWhileTyping = !root.desiredDisableWhileTyping
-              root.requestTrackpadApply()
-            }
-          }
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+              visible: root.devices.length > 0
 
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(scrollHeader.implicitHeight, scrollValue.implicitHeight)
+              Repeater {
+                model: root.devices
 
-            PanelSectionHeader {
-              id: scrollHeader
-              text: "SCROLL SPEED"
-              foreground: root.contentForeground
-              fontFamily: root.contentFontFamily
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
+                Button {
+                  required property var modelData
+                  required property int index
+                  width: parent.width
+                  text: modelData.label
+                    + (modelData.touchpad ? " " + root.t("touchpadTag") : "")
+                    + (modelData.name === root.selectedDevice ? root.batterySuffix(modelData) : "")
+                  selected: modelData.name === root.selectedDevice
+                  bordered: true
+                  leftAlign: true
+                  foreground: root.contentForeground
+                  accent: Color.accent
+                  fontFamily: root.contentFontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.selectDevice(modelData.name)
+                }
+              }
             }
 
             Text {
-              id: scrollValue
-              text: Number(root.desiredScrollFactor).toFixed(2)
-              color: root.contentForeground
+              width: parent.width
+              visible: root.devices.length === 0
+              text: root.loaded ? root.t("noDevice") : root.t("loading")
+              color: root.dimForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption
-              font.bold: true
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
+              wrapMode: Text.WordWrap
             }
           }
 
-          PanelSlider {
-            id: scrollFactorSlider
-            width: parent.width
-            bar: root.bar
-            minimum: 0.1
-            maximum: 2.0
-            step: 0.05
-            value: root.desiredScrollFactor
-            onMoved: function(v) {
-              root.desiredScrollFactor = v
-              root.requestTrackpadApply()
+          // -------------------------------------------------------- motion
+          Section {
+            title: root.t("motionSection")
+            summary: root.motionSummary()
+            expanded: root.motionExpanded
+            onToggled: root.motionExpanded = !root.motionExpanded
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Repeater {
+                model: [
+                  { label: root.t("precise"), profile: "flat", sensitivity: -0.35 },
+                  { label: root.t("balanced"), profile: "flat", sensitivity: -0.15 },
+                  { label: root.t("defaultProfile"), profile: "adaptive", sensitivity: 0.0 }
+                ]
+
+                Button {
+                  required property var modelData
+                  width: (parent.width - Style.space(12)) / 3
+                  text: modelData.label
+                  selected: root.desiredProfile === modelData.profile
+                    && Math.abs(root.desiredSensitivity - modelData.sensitivity) < 0.001
+                  bordered: true
+                  foreground: root.contentForeground
+                  accent: Color.accent
+                  fontFamily: root.contentFontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.applyPreset(modelData.profile, modelData.sensitivity)
+                }
+              }
+            }
+
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(sensitivityHeader.implicitHeight, sensitivityValue.implicitHeight)
+
+              PanelSectionHeader {
+                id: sensitivityHeader
+                text: root.t("sensitivity")
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: sensitivityValue
+                textFormat: Text.PlainText
+                text: Number(root.desiredSensitivity).toFixed(2)
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            PanelSlider {
+              id: sensitivitySlider
+              width: parent.width
+              bar: root.bar
+              minimum: -1
+              maximum: 1
+              step: 0.05
+              value: root.desiredSensitivity
+              enabled: root.selectedDevice !== ""
+              onMoved: function(v) {
+                root.desiredSensitivity = v
+                root.requestMotionApply()
+              }
             }
           }
 
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
+          // ------------------------------------------------------ trackpad
+          // Trackpad-only options. Hyprland accepts these per device, unlike
+          // tap-to-click / tap-and-drag, which only exist globally.
+          Section {
+            title: root.t("trackpadSection")
+            summary: root.trackpadSummary()
+            expanded: root.trackpadExpanded
+            visible: root.selectedIsTrackpad
+            onToggled: root.trackpadExpanded = !root.trackpadExpanded
 
-            Button {
-              width: (parent.width - Style.space(6)) / 2
-              text: "Apple-like"
-              selected: root.desiredNaturalScroll === true
-                && root.desiredClickfinger === true
-                && Math.abs(root.desiredScrollFactor - 0.8) < 0.001
-              bordered: true
-              foreground: root.contentForeground
-              accent: Color.accent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.caption
-              onClicked: root.applyTrackpadPreset(true, true, 0.8)
+            ToggleRow {
+              label: root.t("naturalScroll")
+              checked: root.desiredNaturalScroll
+              onToggled: {
+                root.desiredNaturalScroll = !root.desiredNaturalScroll
+                root.requestTrackpadApply()
+              }
             }
 
-            Button {
-              width: (parent.width - Style.space(6)) / 2
-              text: "Traditional"
-              selected: root.desiredNaturalScroll === false
-                && root.desiredClickfinger === true
-                && Math.abs(root.desiredScrollFactor - 1.0) < 0.001
-              bordered: true
-              foreground: root.contentForeground
-              accent: Color.accent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.caption
-              onClicked: root.applyTrackpadPreset(false, true, 1.0)
+            ToggleRow {
+              label: root.t("clickfinger")
+              checked: root.desiredClickfinger
+              onToggled: {
+                root.desiredClickfinger = !root.desiredClickfinger
+                root.requestTrackpadApply()
+              }
+            }
+
+            ToggleRow {
+              label: root.t("disableWhileTyping")
+              checked: root.desiredDisableWhileTyping
+              onToggled: {
+                root.desiredDisableWhileTyping = !root.desiredDisableWhileTyping
+                root.requestTrackpadApply()
+              }
+            }
+
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(scrollHeader.implicitHeight, scrollValue.implicitHeight)
+
+              PanelSectionHeader {
+                id: scrollHeader
+                text: root.t("scrollSpeed")
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: scrollValue
+                textFormat: Text.PlainText
+                text: Number(root.desiredScrollFactor).toFixed(2)
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            PanelSlider {
+              id: scrollFactorSlider
+              width: parent.width
+              bar: root.bar
+              minimum: 0.1
+              maximum: 2.0
+              step: 0.05
+              value: root.desiredScrollFactor
+              onMoved: function(v) {
+                root.desiredScrollFactor = v
+                root.requestTrackpadApply()
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                width: (parent.width - Style.space(6)) / 2
+                text: root.t("appleLike")
+                selected: root.desiredNaturalScroll === true
+                  && root.desiredClickfinger === true
+                  && Math.abs(root.desiredScrollFactor - 0.8) < 0.001
+                bordered: true
+                foreground: root.contentForeground
+                accent: Color.accent
+                fontFamily: root.contentFontFamily
+                fontSize: Style.font.caption
+                onClicked: root.applyTrackpadPreset(true, true, 0.8)
+              }
+
+              Button {
+                width: (parent.width - Style.space(6)) / 2
+                text: root.t("traditionalPreset")
+                selected: root.desiredNaturalScroll === false
+                  && root.desiredClickfinger === true
+                  && Math.abs(root.desiredScrollFactor - 1.0) < 0.001
+                bordered: true
+                foreground: root.contentForeground
+                accent: Color.accent
+                fontFamily: root.contentFontFamily
+                fontSize: Style.font.caption
+                onClicked: root.applyTrackpadPreset(false, true, 1.0)
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: root.t("tapGlobalHint")
+              color: root.dimForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
           }
 
-          Text {
-            width: parent.width
-            text: "Tap-to-click is a global touchpad setting in Hyprland, so it is not per-device."
-            color: root.dimForeground
-            font.family: root.contentFontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
+          // ------------------------------------------------------ gestures
+          Section {
+            title: root.t("gesturesSection")
+            summary: root.gesturesSummary()
+            expanded: root.gesturesExpanded
+            onToggled: root.gesturesExpanded = !root.gesturesExpanded
+
+            Text {
+              width: parent.width
+              text: root.t("gesturesHint")
+              color: root.dimForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
+
+              Repeater {
+                model: root.gestureSlots
+
+                Button {
+                  required property var modelData
+                  width: parent.width
+                  text: root.gestureRowLabel(modelData.fingers, modelData.direction)
+                  selected: root.gestureFor(modelData.fingers, modelData.direction) !== ""
+                  bordered: true
+                  leftAlign: true
+                  foreground: root.contentForeground
+                  accent: Color.accent
+                  fontFamily: root.contentFontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.cycleGesture(modelData.fingers, modelData.direction)
+                }
+              }
+            }
           }
         }
+      }
 
-        Item {
+      // ------------------------------------------------------------ footer
+      // Pinned below the scroll area: Reset device and the status line stay
+      // visible no matter how many sections are expanded.
+      Column {
+        id: footerColumn
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        spacing: Style.space(6)
+
+        PanelSeparator { foreground: root.contentForeground }
+
+        RowLayout {
           width: parent.width
-          implicitHeight: resetButton.implicitHeight
+          spacing: Style.space(8)
 
           Button {
             id: resetButton
-            width: parent.width * 0.4
-            text: "Reset device"
+            text: root.t("resetDevice")
             bordered: true
-            foreground: root.dimForeground
+            leftAlign: true
+            foreground: root.contentForeground
             accent: Color.urgent
             fontFamily: root.contentFontFamily
             fontSize: Style.font.caption
             enabled: root.selectedDevice !== "" && root.entryFor(root.selectedDevice) !== null
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
             onClicked: root.resetDevice()
           }
 
           Text {
-            text: "Remove this device's override and return it to system defaults."
+            textFormat: Text.PlainText
+            text: root.t("resetHint")
             color: root.dimForeground
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
-            anchors.left: resetButton.right
-            anchors.leftMargin: Style.space(8)
-            anchors.right: parent.right
-            anchors.verticalCenter: resetButton.verticalCenter
-          }
-        }
-
-        PanelSeparator { foreground: root.contentForeground }
-
-        PanelSectionHeader {
-          text: "GESTURES"
-          foreground: root.contentForeground
-          fontFamily: root.contentFontFamily
-        }
-
-        Text {
-          width: parent.width
-          text: "Global trackpad shortcuts. Click a row to cycle its action; \"off\" removes it. Gestures you add from the CLI stay untouched."
-          color: root.dimForeground
-          font.family: root.contentFontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        Column {
-          width: parent.width
-          spacing: Style.space(4)
-
-          Repeater {
-            model: root.gestureSlots
-
-            Button {
-              required property var modelData
-              width: contentColumn.width
-              text: root.gestureRowLabel(modelData.fingers, modelData.direction)
-              selected: root.gestureFor(modelData.fingers, modelData.direction) !== ""
-              bordered: true
-              leftAlign: true
-              foreground: root.contentForeground
-              accent: Color.accent
-              fontFamily: root.contentFontFamily
-              fontSize: Style.font.caption
-              onClicked: root.cycleGesture(modelData.fingers, modelData.direction)
-            }
+            Layout.fillWidth: true
           }
         }
 
         Text {
           width: parent.width
-          text: root.statusText
+          textFormat: Text.PlainText
+          text: root.statusLine
           color: root.statusOk ? root.dimForeground : Color.urgent
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
         }
       }
+    }
+  }
+
+  // ------------------------------------------------------------- components
+
+  // Collapsible section: a hoverable header (chevron + title + live summary)
+  // that toggles a body. Declared children go into the body column, so a
+  // section reads like a container without introducing a nested card.
+  component Section: Column {
+    id: section
+
+    property string title: ""
+    property string summary: ""
+    property bool expanded: false
+    property bool first: false
+    default property alias body: bodyColumn.data
+
+    signal toggled()
+
+    width: parent ? parent.width : implicitWidth
+    spacing: Style.space(6)
+
+    PanelSeparator {
+      width: parent.width
+      visible: !section.first
+      foreground: root.contentForeground
+    }
+
+    BorderSurface {
+      id: headerRow
+      width: parent.width
+      implicitHeight: headerLayout.implicitHeight + Style.space(10)
+      color: headerMouse.containsMouse
+        ? Style.hoverFillFor(root.contentForeground, Color.accent)
+        : "transparent"
+      radius: Style.cornerRadius
+      borderSpec: Border.none()
+
+      Behavior on color { ColorAnimation { duration: 100 } }
+
+      RowLayout {
+        id: headerLayout
+        anchors.fill: parent
+        anchors.leftMargin: Style.space(4)
+        anchors.rightMargin: Style.space(4)
+        spacing: Style.space(8)
+
+        Text {
+          textFormat: Text.PlainText
+          text: section.expanded ? "\uf078" : "\uf054"
+          color: root.dimForeground
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          Layout.alignment: Qt.AlignVCenter
+        }
+
+        PanelSectionHeader {
+          text: section.title
+          fontSize: Style.font.body
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          Layout.alignment: Qt.AlignVCenter
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          text: section.summary
+          visible: text !== ""
+          color: root.dimForeground
+          font.family: root.contentFontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+          horizontalAlignment: Text.AlignRight
+          Layout.fillWidth: true
+          Layout.alignment: Qt.AlignVCenter
+        }
       }
+
+      MouseArea {
+        id: headerMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: section.toggled()
+      }
+    }
+
+    Column {
+      id: bodyColumn
+      width: parent.width
+      spacing: Style.space(8)
+      visible: section.expanded
+    }
+  }
+
+  // Labeled toggle row: body-weight label on the left, a bare ToggleSwitch on
+  // the right. The row owns the click so the whole line is a target.
+  component ToggleRow: BorderSurface {
+    id: toggleRow
+
+    property string label: ""
+    property bool checked: false
+
+    signal toggled()
+
+    width: parent ? parent.width : implicitWidth
+    implicitHeight: Math.max(labelText.implicitHeight, switchTrack.implicitHeight) + Style.space(10)
+    color: rowMouse.containsMouse
+      ? Style.hoverFillFor(root.contentForeground, Color.accent)
+      : "transparent"
+    radius: Style.cornerRadius
+    borderSpec: Border.none()
+
+    Behavior on color { ColorAnimation { duration: 100 } }
+
+    Text {
+      id: labelText
+      textFormat: Text.PlainText
+      text: toggleRow.label
+      color: root.contentForeground
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.body
+      elide: Text.ElideRight
+      width: Math.max(0, parent.width - switchTrack.width - Style.space(20))
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    ToggleSwitch {
+      id: switchTrack
+      checked: toggleRow.checked
+      interactive: false
+      foreground: root.contentForeground
+      accent: Color.accent
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    MouseArea {
+      id: rowMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: toggleRow.toggled()
     }
   }
 }

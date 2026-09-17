@@ -20,7 +20,8 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "deviceName": ""
+      "deviceName": "",
+      "language": "EN"
     },
     "schema": [
       {
@@ -29,6 +30,14 @@
         "label": "Device name",
         "description": "Hyprland device name to configure, for example logitech-usb-receiver-mouse. Leave empty to use the first mouse.",
         "defaultValue": ""
+      },
+      {
+        "key": "language",
+        "type": "enum",
+        "label": "Idioma / Language",
+        "options": ["EN", "ES"],
+        "defaultValue": "EN",
+        "description": "Panel language: EN (English) or ES (Español). It can also be switched from the EN·ES button in the panel header."
       }
     ]
   }
