@@ -5,8 +5,10 @@ import qs.Commons
 import qs.Ui
 
 // Mouse Tuner bar widget: a bar icon that opens a small panel to set the
-// acceleration profile and sensitivity of one pointing device. The heavy
-// lifting (validating, writing the managed block in ~/.config/hypr/input.lua,
+// acceleration profile and sensitivity of one pointing device, plus the
+// trackpad-specific options Hyprland accepts per device (natural scrolling,
+// clickfinger, disable-while-typing, scroll factor). The heavy lifting
+// (validating, writing the managed block in ~/.config/hypr/input.lua,
 // reloading Hyprland) lives in bin/mouse-tuner.sh, which prints JSON.
 Panel {
   id: root
@@ -30,9 +32,24 @@ Panel {
   property string selectedDevice: ""
   property string desiredProfile: "adaptive"
   property real desiredSensitivity: 0.0
+  property bool desiredNaturalScroll: false
+  property bool desiredClickfinger: false
+  property bool desiredDisableWhileTyping: true
+  property real desiredScrollFactor: 1.0
   property string statusText: "Loading..."
   property bool statusOk: true
   property bool applyQueued: false
+  // Which group of fields the next debounced apply should write. Each control
+  // only sends its own fields, so the helper's upsert never adds a setting the
+  // user did not touch.
+  property bool pendingMotion: false
+  property bool pendingTrackpad: false
+
+  readonly property bool selectedIsTrackpad: {
+    for (var i = 0; i < devices.length; i++)
+      if (devices[i].name === selectedDevice) return devices[i].touchpad === true
+    return false
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -49,14 +66,29 @@ Panel {
 
   function syncFromEntry() {
     var e = entryFor(selectedDevice)
-    desiredProfile = e ? String(e.accel_profile) : "adaptive"
-    desiredSensitivity = e ? Number(e.sensitivity) : 0.0
+    desiredProfile = (e && e.accel_profile !== undefined) ? String(e.accel_profile) : "adaptive"
+    desiredSensitivity = (e && e.sensitivity !== undefined) ? Number(e.sensitivity) : 0.0
+    desiredNaturalScroll = (e && e.natural_scroll !== undefined) ? e.natural_scroll === true : false
+    desiredClickfinger = (e && e.clickfinger_behavior !== undefined) ? e.clickfinger_behavior === true : false
+    desiredDisableWhileTyping = (e && e.disable_while_typing !== undefined) ? e.disable_while_typing === true : true
+    desiredScrollFactor = (e && e.scroll_factor !== undefined) ? Number(e.scroll_factor) : 1.0
   }
 
   function updateStatusLine() {
     var e = entryFor(selectedDevice)
-    if (e) statusText = String(e.accel_profile) + " · " + Number(e.sensitivity).toFixed(2) + " (override active)"
-    else statusText = "No override · device defaults"
+    if (!e) {
+      statusText = "No override · device defaults"
+      return
+    }
+    var parts = []
+    if (e.accel_profile !== undefined)
+      parts.push(String(e.accel_profile) + " · " + Number(e.sensitivity).toFixed(2))
+    if (e.natural_scroll !== undefined) parts.push("natural " + (e.natural_scroll ? "on" : "off"))
+    if (e.clickfinger_behavior !== undefined) parts.push("clickfinger " + (e.clickfinger_behavior ? "on" : "off"))
+    if (e.scroll_factor !== undefined) parts.push("scroll ×" + Number(e.scroll_factor).toFixed(2))
+    statusText = parts.length > 0
+      ? parts.join(" · ") + " (override active)"
+      : "Override active"
   }
 
   function refresh() {
@@ -107,12 +139,23 @@ Panel {
       Util.execDetached("omarchy bar set io.github.mrchispa.mouse-tuner deviceName " + Util.shellQuote(String(name)))
   }
 
-  function requestApply() {
+  function requestMotionApply() {
     if (selectedDevice === "") {
       statusOk = false
       statusText = "No device selected"
       return
     }
+    pendingMotion = true
+    applyTimer.restart()
+  }
+
+  function requestTrackpadApply() {
+    if (selectedDevice === "") {
+      statusOk = false
+      statusText = "No device selected"
+      return
+    }
+    pendingTrackpad = true
     applyTimer.restart()
   }
 
@@ -122,20 +165,48 @@ Panel {
       applyQueued = true
       return
     }
+    if (!pendingMotion && !pendingTrackpad) return
+
+    var args = ["bash", helperScript, "set", "--device", selectedDevice]
+    if (pendingMotion) {
+      args.push("--profile", desiredProfile)
+      args.push("--sensitivity", desiredSensitivity.toFixed(2))
+    }
+    if (pendingTrackpad && selectedIsTrackpad) {
+      args.push("--natural-scroll", desiredNaturalScroll ? "true" : "false")
+      args.push("--clickfinger", desiredClickfinger ? "true" : "false")
+      args.push("--disable-while-typing", desiredDisableWhileTyping ? "true" : "false")
+      args.push("--scroll-factor", desiredScrollFactor.toFixed(2))
+    }
+
+    // The selection can change inside the debounce window (a trackpad control
+    // touched, then a mouse picked). With no flags left the helper would reject
+    // the call, so drop it instead of surfacing a pointless error.
+    if (args.length <= 5) {
+      pendingMotion = false
+      pendingTrackpad = false
+      applyQueued = false
+      return
+    }
+
+    pendingMotion = false
+    pendingTrackpad = false
     applyQueued = false
-    applyProc.command = [
-      "bash", helperScript, "set",
-      "--device", selectedDevice,
-      "--profile", desiredProfile,
-      "--sensitivity", desiredSensitivity.toFixed(2)
-    ]
+    applyProc.command = args
     applyProc.running = true
   }
 
   function applyPreset(profile, sensitivity) {
     desiredProfile = profile
     desiredSensitivity = sensitivity
-    requestApply()
+    requestMotionApply()
+  }
+
+  function applyTrackpadPreset(natural, clickfinger, factor) {
+    desiredNaturalScroll = natural
+    desiredClickfinger = clickfinger
+    desiredScrollFactor = factor
+    requestTrackpadApply()
   }
 
   function resetDevice() {
@@ -256,7 +327,12 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(520))
+    // No fixed height cap: with a trackpad selected the panel carries three
+    // toggles, a scroll slider and two presets on top of the device list and
+    // the motion controls. `fittedContentHeight` already clamps to the card
+    // space actually available on screen, so sizing to the content here keeps
+    // every row visible the way the same panel does for a mouse.
+    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -400,7 +476,142 @@ Panel {
           enabled: root.selectedDevice !== ""
           onMoved: function(v) {
             root.desiredSensitivity = v
-            root.requestApply()
+            root.requestMotionApply()
+          }
+        }
+
+        // Trackpad-only options. Hyprland accepts these per device, unlike
+        // tap-to-click / tap-and-drag, which only exist globally.
+        Column {
+          id: trackpadSection
+          width: parent.width
+          visible: root.selectedIsTrackpad
+          height: visible ? implicitHeight : 0
+          spacing: Style.space(6)
+
+          PanelSeparator { foreground: root.contentForeground }
+
+          PanelSectionHeader {
+            text: "TRACKPAD"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Natural scrolling"
+            checked: root.desiredNaturalScroll
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: {
+              root.desiredNaturalScroll = !root.desiredNaturalScroll
+              root.requestTrackpadApply()
+            }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Clickfinger (2-finger right click)"
+            checked: root.desiredClickfinger
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: {
+              root.desiredClickfinger = !root.desiredClickfinger
+              root.requestTrackpadApply()
+            }
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Disable while typing"
+            checked: root.desiredDisableWhileTyping
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+            onClicked: {
+              root.desiredDisableWhileTyping = !root.desiredDisableWhileTyping
+              root.requestTrackpadApply()
+            }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(scrollHeader.implicitHeight, scrollValue.implicitHeight)
+
+            PanelSectionHeader {
+              id: scrollHeader
+              text: "SCROLL SPEED"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+              id: scrollValue
+              text: Number(root.desiredScrollFactor).toFixed(2)
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
+
+          PanelSlider {
+            id: scrollFactorSlider
+            width: parent.width
+            bar: root.bar
+            minimum: 0.1
+            maximum: 2.0
+            step: 0.05
+            value: root.desiredScrollFactor
+            onMoved: function(v) {
+              root.desiredScrollFactor = v
+              root.requestTrackpadApply()
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Button {
+              width: (parent.width - Style.space(6)) / 2
+              text: "Apple-like"
+              selected: root.desiredNaturalScroll === true
+                && root.desiredClickfinger === true
+                && Math.abs(root.desiredScrollFactor - 0.8) < 0.001
+              bordered: true
+              foreground: root.contentForeground
+              accent: Color.accent
+              fontFamily: root.contentFontFamily
+              fontSize: Style.font.caption
+              onClicked: root.applyTrackpadPreset(true, true, 0.8)
+            }
+
+            Button {
+              width: (parent.width - Style.space(6)) / 2
+              text: "Traditional"
+              selected: root.desiredNaturalScroll === false
+                && root.desiredClickfinger === true
+                && Math.abs(root.desiredScrollFactor - 1.0) < 0.001
+              bordered: true
+              foreground: root.contentForeground
+              accent: Color.accent
+              fontFamily: root.contentFontFamily
+              fontSize: Style.font.caption
+              onClicked: root.applyTrackpadPreset(false, true, 1.0)
+            }
+          }
+
+          Text {
+            width: parent.width
+            text: "Tap-to-click is a global touchpad setting in Hyprland, so it is not per-device."
+            color: root.dimForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
         }
 
